@@ -238,7 +238,7 @@ export class Hoop {
       ctx.fillStyle = c.dim;
       ctx.font = `${S(12)}px "Archivo", sans-serif`;
       ctx.textAlign = "center";
-      ctx.fillText("signal too noisy — ball is held", w / 2, floorY + S(22));
+      ctx.fillText("no usable forehead signal — check AF7 / AF8 contact", w / 2, floorY + S(22));
     }
   }
 }

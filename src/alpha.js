@@ -20,9 +20,13 @@ const ALPHA_HI = 12;
 const TOTAL_LO = 2;
 const TOTAL_HI = 30;
 
-// Anything this big in a one-second window is a blink, a jaw clench or a bumped
-// electrode, not brain rhythm. Those windows are dropped rather than scored.
-const ARTIFACT_SD_UV = 150;
+// Anything this big in a one-second window is a bumped electrode or a hard
+// clench, not brain rhythm, and gets dropped. Set well above an ordinary blink:
+// on forehead electrodes a blink alone can pass 150 µV, and holding the ball
+// every time someone blinks makes the game unplayable. Blinks don't need to be
+// rejected to be handled — they land outside the alpha band, so they already
+// push the ratio down on their own.
+const ARTIFACT_SD_UV = 250;
 
 /** Relative alpha for one window of raw microvolts. */
 export function relativeAlpha(buf, n) {
@@ -66,20 +70,30 @@ export class AlphaMeter {
   }
 
   /**
-   * Prefers the two electrodes behind the ears. They're the most posterior thing
-   * a Muse has, and alpha is a back-of-the-head rhythm — the forehead pair sees
-   * far less of it and far more eye movement. Falls back to whatever has usable
-   * contact.
+   * The forehead pair, AF7 and AF8.
+   *
+   * Textbook says use the posterior electrodes — alpha is a back-of-the-head
+   * rhythm and TP9/TP10 are the most posterior thing a Muse has. In practice on
+   * this headband the ear contacts are the ones that rail and pick up muscle,
+   * and an unusable electrode with better theory behind it is still unusable.
+   * The forehead pair sees less alpha but sees it reliably.
+   *
+   * Only falls back to other channels when the headband reports names we don't
+   * recognise at all (an unknown firmware layout), never to quietly substitute
+   * the ear channels.
    */
   _pick() {
-    const posterior = [];
-    const other = [];
+    const front = [];
+    let named = false;
     this.channels.forEach((c, i) => {
-      if (c.quality.grade === "poor" || c.quality.grade === "waiting") return;
       const name = this.names[i] || "";
-      (name === "TP9" || name === "TP10" ? posterior : other).push(i);
+      if (name === "AF7" || name === "AF8") {
+        named = true;
+        if (c.quality.grade !== "poor" && c.quality.grade !== "waiting") front.push(i);
+      }
     });
-    return posterior.length ? posterior : other;
+    if (named) return front;
+    return this.channels.map((_, i) => i).filter((i) => this.channels[i].quality.grade === "good" || this.channels[i].quality.grade === "fair");
   }
 
   /** Call ~10×/s. Returns the smoothed share of power in the alpha band. */
@@ -90,24 +104,21 @@ export class AlphaMeter {
     const picks = this._pick();
     let sum = 0;
     let count = 0;
-    let artifact = picks.length === 0;
+    const used = [];
 
     for (const i of picks) {
       const n = this.channels[i].raw.tail(WIN, this.buf);
-      if (n < WIN) {
-        artifact = true;
-        continue;
-      }
-      if (sd(this.buf, n) > ARTIFACT_SD_UV) {
-        artifact = true;
-        continue;
-      }
+      if (n < WIN) continue;
+      if (sd(this.buf, n) > ARTIFACT_SD_UV) continue;
       sum += relativeAlpha(this.buf, n).rel;
       count++;
+      used.push(i);
     }
 
-    this.used = picks;
-    this.artifact = artifact || count === 0;
+    // One channel having a moment shouldn't veto a clean one — the ball is only
+    // held when there is nothing usable left to read.
+    this.used = used;
+    this.artifact = count === 0;
     if (count) {
       this.raw = sum / count;
       // exponential smoothing, frame-rate independent

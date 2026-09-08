@@ -166,8 +166,9 @@ app.innerHTML = `
         </p>
         <p class="note">
           Blinks and jaw clenches make the ball go <b>down</b>, not up — the score is alpha as a share of everything else, so anything that adds
-          broadband noise dilutes it. Windows that look like movement freeze the ball instead of scoring. The ball reads
-          <b id="used-chans">the ear electrodes</b>, the most posterior thing a Muse has.
+          broadband noise dilutes it. Only a window with nothing usable in it freezes the ball. The ball reads the forehead pair,
+          <b id="used-chans">AF7 + AF8</b>. Textbook alpha is strongest at the back of the head, but on this headband the ear
+          contacts are the ones that rail and pick up jaw muscle, and a better electrode in theory is worth nothing if it won't hold contact.
         </p>
       </div>
     </section>
@@ -488,7 +489,7 @@ setInterval(() => {
   el("lift-pct").textContent = meter.artifact ? "held" : `${Math.round(lift * 100)}%`;
   el("baskets").textContent = hoop.score;
   el("zone-pct").textContent = hoop.totalMs > 1000 ? `${Math.round((hoop.zoneMs / hoop.totalMs) * 100)}%` : "—";
-  el("used-chans").textContent = meter.used.length ? meter.used.map((i) => channelNames[i]).join(" + ") : "nothing usable";
+  el("used-chans").textContent = meter.used.length ? meter.used.map((i) => channelNames[i]).join(" + ") : "AF7/AF8 unusable";
 }, 100);
 
 // ---- the slower numbers --------------------------------------------------
