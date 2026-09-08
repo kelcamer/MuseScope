@@ -20,6 +20,11 @@ export class Scope {
     this.scale = 100; // µV at the top of a lane; 0 means auto
     this.autoScale = new Float32Array(CHANNELS.length).fill(100);
     this.colors = null;
+    this.labels = CHANNELS.slice();
+  }
+
+  setLabels(names) {
+    if (names && names.length) this.labels = names.slice();
   }
 
   // Read the palette out of CSS once. Doing this per frame means a full style
@@ -131,7 +136,7 @@ export class Scope {
       // labels: channel name, and what the lane's full height means
       ctx.fillStyle = ink;
       ctx.textAlign = "left";
-      ctx.fillText(CHANNELS[c], 4 * dpr, mid - 7 * dpr);
+      ctx.fillText(this.labels[c] || `ch${c + 1}`, 4 * dpr, mid - 7 * dpr);
       ctx.fillStyle = faint;
       ctx.fillText(`±${Math.round(span)}µV`, 4 * dpr, mid + 8 * dpr);
     }

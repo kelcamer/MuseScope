@@ -42,6 +42,15 @@ app.innerHTML = `
         <button class="btn" id="demo">Simulate a signal</button>
       </div>
       <p class="note" id="gate-note"></p>
+      <details class="probe" id="probe" hidden>
+        <summary>What the headband exposes</summary>
+        <p class="note">
+          Every service and characteristic Chrome will show for this device. If the connection failed, this is the useful part — the app looks for a
+          writable characteristic to send commands to and notifying ones to read EEG from.
+        </p>
+        <pre id="probe-out" class="mono"></pre>
+        <button class="btn btn--sm" id="copy-probe">Copy</button>
+      </details>
     </section>
 
     <section class="panel panel--scope" id="live" hidden>
@@ -117,6 +126,7 @@ const scope = new Scope(el("scope"));
 
 const seen = { expected: CHANNELS.map(() => null), dropped: 0, total: 0 };
 let mainsHz = 60;
+let channelNames = CHANNELS.slice();
 let startedAt = 0;
 let running = false;
 let demo = null;
@@ -155,8 +165,18 @@ function onSamples(channelIndex, samples, seq) {
   seen.total++;
 }
 
+function showProbe(report) {
+  el("probe").hidden = false;
+  el("probe-out").textContent = report || "nothing discovered";
+}
+
 const client = new MuseClient({
   onSamples,
+  onProbe: (_services, report) => showProbe(report),
+  onChannels: (names) => {
+    channelNames = names;
+    scope.setLabels(names);
+  },
   onTelemetry: ({ battery }) => {
     el("battery").textContent = `${Math.round(battery)}%`;
   },
@@ -193,7 +213,9 @@ el("connect").addEventListener("click", async () => {
       el("gate-note").textContent =
         "Chrome can't reach Bluetooth. On macOS, allow it in System Settings → Privacy & Security → Bluetooth, then restart Chrome.";
     } else {
-      el("gate-note").textContent = msg;
+      const [headline] = msg.split("\n\n");
+      el("gate-note").textContent = headline;
+      if (client.report) showProbe(client.report);
     }
     status("not connected", "bad");
   }
@@ -217,6 +239,12 @@ el("pause").addEventListener("click", async () => {
     await client.start();
     el("pause").textContent = "Pause";
   }
+});
+
+el("copy-probe").addEventListener("click", () => {
+  navigator.clipboard?.writeText(el("probe-out").textContent || "");
+  el("copy-probe").textContent = "Copied";
+  setTimeout(() => (el("copy-probe").textContent = "Copy"), 1500);
 });
 
 el("scale").addEventListener("change", (e) => scope.setScale(Number(e.target.value)));
@@ -280,12 +308,13 @@ setInterval(() => {
   const rows = [];
   channels.forEach((c, i) => {
     const q = c.measure(mainsHz);
-    const dot = el(`e-${CHANNELS[i]}`);
+    const dot = el(`e-${name}`);
     if (dot) dot.setAttribute("class", `e ${q.grade}`);
+    const name = channelNames[i] || `ch${i + 1}`;
     rows.push(`
       <tr>
-        <td class="mono">${CHANNELS[i]}</td>
-        <td>${EEG_CHARS[i].where}</td>
+        <td class="mono">${name}</td>
+        <td>${(EEG_CHARS.find((c) => c.name === name) || {}).where || "—"}</td>
         <td><span class="grade ${q.grade}">${GRADE_LABEL[q.grade]}</span></td>
         <td class="mono">${q.sd < 0.05 ? "—" : `${q.sd.toFixed(1)} µV`}</td>
         <td class="mono">${(q.mains * 100).toFixed(0)}%</td>

@@ -122,3 +122,12 @@ footer { max-width: 1000px; margin: 0 auto; padding: 0 20px 40px; }
   .panel { padding: 16px; }
   .panel h1 { font-size: 26px; }
 }
+
+.probe { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: #0d1417; }
+.probe summary { font-size: 13px; font-weight: 600; cursor: pointer; color: var(--ink-dim); }
+.probe summary:hover { color: var(--ink); }
+.probe pre {
+  font-size: 11px; line-height: 1.5; color: var(--ink-dim); background: #080e11;
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+  overflow-x: auto; white-space: pre; margin: 10px 0;
+}
