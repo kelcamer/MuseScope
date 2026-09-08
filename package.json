@@ -1,0 +1,14 @@
+{
+  "name": "muse-scope",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Muse Scope — connect a Muse S headband over Web Bluetooth and watch the raw four-channel EEG, with a per-electrode contact check.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
