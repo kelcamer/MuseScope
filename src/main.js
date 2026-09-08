@@ -147,6 +147,7 @@ app.innerHTML = `
           <button class="btn" id="use-saved" hidden>Use last calibration</button>
         </div>
         <div class="calbar" id="calbar" hidden><div class="calbar__fill" id="calbar-fill"></div></div>
+        <p class="note" id="cal-note"></p>
       </div>
 
       <div id="game-wrap" hidden>
@@ -460,20 +461,27 @@ setInterval(() => {
     if (!meter.artifact) calSamples.push(rel);
     const left = Math.max(0, calEndsAt - now);
     el("calbar-fill").style.width = `${100 - (left / (CAL_SECONDS * 1000)) * 100}%`;
+    el("cal-note").textContent = `${calSamples.length} clean windows · forehead amplitude ${meter.lastSd.toFixed(0)} µV · alpha ${(rel * 100).toFixed(0)}%`;
     if (left <= 0) {
       const b = baselineFrom(calSamples);
+      const collected = calSamples.length;
       calSamples = null;
       if (b) {
         baseline = b;
         saveBaseline(b);
         hoop.reset();
+        el("cal-note").textContent = `Calibrated on ${collected} windows. Resting alpha ${(b.floor * 100).toFixed(0)}%, ceiling ${(b.ceiling * 100).toFixed(0)}%.`;
         if (el("sound").checked && view === "hoop") {
           resumeAudio();
           startTone();
         }
       } else {
-        el("gate-note").textContent = "";
-        status("calibration failed — signal too noisy", "bad");
+        // Say what was actually wrong rather than just "failed".
+        el("cal-note").textContent =
+          `Not enough clean signal: ${collected} usable windows out of ~${CAL_SECONDS * 10}. The forehead pair was reading ${meter.lastSd.toFixed(0)} µV ` +
+          `(needs to stay under 180). Usually that's the reference pad in the middle of your forehead — wipe it and the AF7/AF8 pads with a damp finger, ` +
+          `then sit still and try again.`;
+        status("calibration failed", "bad");
       }
       showCalibrationState();
     }

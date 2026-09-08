@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { SAMPLE_RATE } from "./muse.js";
-import { binPower } from "./signal.js";
+import { binPower, detrend } from "./signal.js";
 
 const WIN = SAMPLE_RATE; // 1 second → 1 Hz bin spacing
 const ALPHA_LO = 8;
@@ -26,7 +26,7 @@ const TOTAL_HI = 30;
 // every time someone blinks makes the game unplayable. Blinks don't need to be
 // rejected to be handled — they land outside the alpha band, so they already
 // push the ratio down on their own.
-const ARTIFACT_SD_UV = 250;
+const ARTIFACT_SD_UV = 180;
 
 /** Relative alpha for one window of raw microvolts. */
 export function relativeAlpha(buf, n) {
@@ -40,18 +40,6 @@ export function relativeAlpha(buf, n) {
   return { alpha, total, rel: total > 0 ? alpha / total : 0 };
 }
 
-function sd(buf, n) {
-  let sum = 0;
-  for (let i = 0; i < n; i++) sum += buf[i];
-  const mean = sum / n;
-  let acc = 0;
-  for (let i = 0; i < n; i++) {
-    const d = buf[i] - mean;
-    acc += d * d;
-  }
-  return Math.sqrt(acc / n);
-}
-
 export class AlphaMeter {
   constructor(channels, names) {
     this.channels = channels;
@@ -63,6 +51,7 @@ export class AlphaMeter {
     this.used = [];
     this.tau = 0.45; // seconds of smoothing — enough to stop jitter, not enough to lag
     this.last = 0;
+    this.lastSd = 0; // amplitude of the noisiest channel last window, for diagnostics
   }
 
   setNames(names) {
@@ -70,7 +59,8 @@ export class AlphaMeter {
   }
 
   /**
-   * The forehead pair, AF7 and AF8.
+   * The forehead pair, AF7 and AF8 — whatever their contact grade says.
+   *
    *
    * Textbook says use the posterior electrodes — alpha is a back-of-the-head
    * rhythm and TP9/TP10 are the most posterior thing a Muse has. In practice on
@@ -89,7 +79,11 @@ export class AlphaMeter {
       const name = this.names[i] || "";
       if (name === "AF7" || name === "AF8") {
         named = true;
-        if (c.quality.grade !== "poor" && c.quality.grade !== "waiting") front.push(i);
+        // The grade is advisory here on purpose. Gating on it meant a single
+        // "poor" reading dropped the game to no usable channels at all, which
+        // is how calibration ended up collecting nothing. The amplitude check
+        // below is the real gate.
+        front.push(i);
       }
     });
     if (named) return front;
@@ -106,14 +100,18 @@ export class AlphaMeter {
     let count = 0;
     const used = [];
 
+    let worstSd = 0;
     for (const i of picks) {
       const n = this.channels[i].raw.tail(WIN, this.buf);
       if (n < WIN) continue;
-      if (sd(this.buf, n) > ARTIFACT_SD_UV) continue;
+      const amp = detrend(this.buf, n).sd;
+      if (amp > worstSd) worstSd = amp;
+      if (amp > ARTIFACT_SD_UV) continue;
       sum += relativeAlpha(this.buf, n).rel;
       count++;
       used.push(i);
     }
+    this.lastSd = worstSd;
 
     // One channel having a moment shouldn't veto a clean one — the ball is only
     // held when there is nothing usable left to read.
@@ -131,7 +129,7 @@ export class AlphaMeter {
 
 /** Turn a set of calibration samples into the floor and ceiling of the game. */
 export function baselineFrom(samples) {
-  if (samples.length < 20) return null;
+  if (samples.length < 15) return null;
   const sorted = samples.slice().sort((a, b) => a - b);
   const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
   return { floor: q(0.5), ceiling: Math.max(q(0.9), q(0.5) * 1.25), n: samples.length };

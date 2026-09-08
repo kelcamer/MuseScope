@@ -101,6 +101,39 @@ export function binPower(samples, n, freq, rate = SAMPLE_RATE) {
 }
 
 /**
+ * Subtract the DC offset and the linear drift, in place.
+ *
+ * Muse's raw counts sit on a large offset that wanders — over a one-second
+ * window that alone can be hundreds of microvolts, while the rhythm anyone
+ * actually wants is tens. Any amplitude or power measured without removing it
+ * is mostly a measurement of the drift.
+ *
+ * Returns the standard deviation of what's left, plus how much drift was taken
+ * out (peak to peak), because a wandering electrode is itself a symptom.
+ */
+export function detrend(buf, n) {
+  let sx = 0;
+  let sy = 0;
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sx += i;
+    sy += buf[i];
+    sxy += i * buf[i];
+    sxx += i * i;
+  }
+  const denom = n * sxx - sx * sx;
+  const slope = denom !== 0 ? (n * sxy - sx * sy) / denom : 0;
+  const intercept = (sy - slope * sx) / n;
+  let acc = 0;
+  for (let i = 0; i < n; i++) {
+    buf[i] -= intercept + slope * i;
+    acc += buf[i] * buf[i];
+  }
+  return { sd: Math.sqrt(acc / n), driftPP: Math.abs(slope) * n };
+}
+
+/**
  * Contact quality for one electrode, from the last second of RAW samples.
  *
  * This is a heuristic, not Muse's own headband-status indicator — the official
@@ -117,35 +150,30 @@ export function binPower(samples, n, freq, rate = SAMPLE_RATE) {
  * grade of good | fair | poor.
  */
 export function contactQuality(raw, n, mainsHz) {
-  if (n < SAMPLE_RATE / 4) return { sd: 0, railPct: 0, mains: 0, grade: "waiting" };
+  if (n < SAMPLE_RATE / 4) return { sd: 0, railPct: 0, mains: 0, driftPP: 0, grade: "waiting" };
 
-  let sum = 0;
+  // Railing is judged on the untouched samples — it's about hitting the ADC
+  // limits, which detrending would hide.
   let railed = 0;
-  for (let i = 0; i < n; i++) {
-    sum += raw[i];
-    if (Math.abs(raw[i]) > 800) railed++;
-  }
-  const mean = sum / n;
-  let varSum = 0;
-  for (let i = 0; i < n; i++) {
-    const d = raw[i] - mean;
-    varSum += d * d;
-  }
-  const sd = Math.sqrt(varSum / n);
+  for (let i = 0; i < n; i++) if (Math.abs(raw[i]) > 800) railed++;
   const railPct = (railed / n) * 100;
 
-  // mains power as a share of total power (variance), both in µV²
+  // Everything else is judged on the signal with offset and drift removed, so
+  // "amplitude" means the size of the oscillation rather than the size of the
+  // wander, and the mains ratio isn't diluted by drift power.
+  const { sd, driftPP } = detrend(raw, n);
+
   const mainsPower = binPower(raw, n, mainsHz) + binPower(raw, n, mainsHz * 2);
-  const total = varSum / n || 1;
+  const total = sd * sd || 1;
   const mains = Math.min(1, mainsPower / total);
 
   // Thresholds are judgement calls, checked against synthesized signals rather
   // than against a gold standard: mains at the EEG's own amplitude gives a ratio
   // of 0.5, which is already a bad electrode.
   let grade = "good";
-  if (railPct > 2 || sd < 1.5 || sd > 400 || mains > 0.5) grade = "poor";
-  else if (sd > 150 || mains > 0.2) grade = "fair";
-  return { sd, railPct, mains, grade };
+  if (railPct > 2 || sd < 1.5 || sd > 400 || mains > 0.5 || driftPP > 1500) grade = "poor";
+  else if (sd > 150 || mains > 0.2 || driftPP > 500) grade = "fair";
+  return { sd, railPct, mains, driftPP, grade };
 }
 
 /** Per-channel state: raw ring for measurement, filtered ring for the trace. */
