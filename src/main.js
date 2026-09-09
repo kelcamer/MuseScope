@@ -103,7 +103,7 @@ app.innerHTML = `
         </div>
         <table class="quality">
           <thead>
-            <tr><th>Electrode</th><th>Where</th><th>Contact</th><th>Amplitude</th><th>Mains</th></tr>
+            <tr><th>Electrode</th><th>Where</th><th>Contact</th><th>Signal 5–30 Hz</th><th>Mains</th></tr>
           </thead>
           <tbody id="qrows"></tbody>
         </table>
@@ -111,9 +111,10 @@ app.innerHTML = `
 
       <p class="note">
         Contact grades are computed here, not read from the headband — Muse's own fit indicator lives in the native SDK and isn't exposed over
-        Bluetooth. A <b>poor</b> grade means the electrode is railing, flat, or picking up more mains hum than brain. It does <b>not</b> catch muscle:
-        a jaw-clenched channel can look like dense fuzz and still grade good. Filtering affects only what you see; every number in this table comes
-        from raw microvolts.
+        Bluetooth. <b>Signal</b> is the size of the 5–30 Hz activity, where ordinary EEG runs 5–30 µV; the offset and slow drift are subtracted first,
+        so blinks and a wandering baseline don't inflate it. <b>Mains</b> is hum measured against that same band — how much of what's here is the
+        room's wiring rather than you. A <b>poor</b> grade means railing, flat, drifting hard, or drowned in hum. It still under-reports muscle: a
+        clenched jaw raises the number without necessarily failing it. Display filtering never touches these figures.
       </p>
       <p class="note">
         Quick checks that you're seeing your own body: <b>blink hard</b> — big humps on AF7/AF8 only. <b>Clench your jaw</b> — dense fuzz, worst at

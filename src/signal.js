@@ -11,6 +11,10 @@ import { SAMPLE_RATE } from "./muse.js";
 export const WINDOW_SEC = 4;
 export const RING_LEN = SAMPLE_RATE * WINDOW_SEC;
 const QUALITY_LEN = SAMPLE_RATE; // the contact check looks at the last second
+// The band the contact check judges by — the same one the game measures in, so
+// the two never disagree about whether a channel is usable.
+const BAND_LO = 5;
+const BAND_HI = 30;
 
 /** Fixed-length circular buffer of samples. */
 export class Ring {
@@ -150,7 +154,7 @@ export function detrend(buf, n) {
  * grade of good | fair | poor.
  */
 export function contactQuality(raw, n, mainsHz) {
-  if (n < SAMPLE_RATE / 4) return { sd: 0, railPct: 0, mains: 0, driftPP: 0, grade: "waiting" };
+  if (n < SAMPLE_RATE / 4) return { sd: 0, broadbandSd: 0, railPct: 0, mains: 0, driftPP: 0, grade: "waiting" };
 
   // Railing is judged on the untouched samples — it's about hitting the ADC
   // limits, which detrending would hide.
@@ -163,17 +167,24 @@ export function contactQuality(raw, n, mainsHz) {
   // wander, and the mains ratio isn't diluted by drift power.
   const { sd, driftPP } = detrend(raw, n);
 
+  // Hum is judged against the band it competes with, not against total power.
+  // "Is there more mains here than brain rhythm?" is the question a fit check
+  // is actually asking, and the answer shouldn't change because the electrode
+  // happens to also be drifting or picking up muscle at 70 Hz.
   const mainsPower = binPower(raw, n, mainsHz) + binPower(raw, n, mainsHz * 2);
-  const total = sd * sd || 1;
-  const mains = Math.min(1, mainsPower / total);
+  let inBand = 0;
+  for (let f = BAND_LO; f <= BAND_HI; f++) inBand += binPower(raw, n, f);
+  const rms = Math.sqrt(inBand);
+  const mains = Math.min(1, mainsPower / (mainsPower + inBand || 1));
 
-  // Thresholds are judgement calls, checked against synthesized signals rather
-  // than against a gold standard: mains at the EEG's own amplitude gives a ratio
-  // of 0.5, which is already a bad electrode.
+  // Thresholds are judgement calls checked against synthesized signals, not
+  // against a gold standard. They read off the 5-30 Hz RMS, where ordinary EEG
+  // runs 5-30 µV: far below that is a dead electrode, far above it is muscle,
+  // and a mains share past half means there's more hum here than rhythm.
   let grade = "good";
-  if (railPct > 2 || sd < 1.5 || sd > 400 || mains > 0.5 || driftPP > 1500) grade = "poor";
-  else if (sd > 150 || mains > 0.2 || driftPP > 500) grade = "fair";
-  return { sd, railPct, mains, driftPP, grade };
+  if (railPct > 2 || rms < 0.8 || rms > 200 || mains > 0.8 || driftPP > 1500) grade = "poor";
+  else if (rms > 80 || mains > 0.5 || driftPP > 500) grade = "fair";
+  return { sd: rms, broadbandSd: sd, railPct, mains, driftPP, grade };
 }
 
 /** Per-channel state: raw ring for measurement, filtered ring for the trace. */
