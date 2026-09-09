@@ -11,12 +11,12 @@
 import { MuseClient, bluetoothAvailable, CHANNELS, EEG_CHARS, SAMPLES_PER_PACKET } from "./muse.js";
 import { ChannelState } from "./signal.js";
 import { Scope } from "./scope.js";
-import { AlphaMeter, baselineFrom, liftFrom } from "./alpha.js";
+import { AlphaMeter, baselineFrom, liftFrom, BAND_NAMES } from "./alpha.js";
 import { Hoop } from "./hoop.js";
 import { startTone, stopTone, setToneLift, swish, bounce, resumeAudio } from "./audio.js";
 import "./styles.css";
 
-const BASELINE_KEY = "museScopeBaselinesV2";
+const BASELINE_KEY = "museScopeBaselinesV3";
 const CAL_SECONDS = 20;
 
 const app = document.getElementById("app");
@@ -62,8 +62,10 @@ app.innerHTML = `
 
     <nav class="tabs" id="tabs" hidden>
       <button class="tab is-on" data-view="scope">Scope</button>
+      <button class="tab" data-view="theta">hoop-theta</button>
       <button class="tab" data-view="alpha">hoop-alpha</button>
       <button class="tab" data-view="beta">hoop-beta</button>
+      <button class="tab" data-view="gamma">hoop-gamma</button>
     </nav>
 
     <section class="panel panel--scope" id="view-scope" hidden>
@@ -141,9 +143,9 @@ app.innerHTML = `
 
       <div id="cal-wrap">
         <p class="lede">
-          The ball rises with a brain rhythm: <b>alpha</b> (8–12 Hz), which grows when your visual system stops working at something, or <b>beta</b>
-          (13–25 Hz), which grows when you're working at something. Everyone sits at a different level, so first it measures yours — one calibration
-          covers both games.
+          The ball rises with one brain rhythm: <b>theta</b> (5–7 Hz, drifting off), <b>alpha</b> (8–12 Hz, eyes closed and unfocused), <b>beta</b>
+          (13–25 Hz, working at something) or <b>gamma</b> (30–45 Hz, which on this hardware is mostly jaw muscle — see that tab). Everyone sits at a
+          different level, so first it measures yours. One calibration covers all four.
         </p>
         <p class="note">Sit still, <b>eyes open</b>, jaw slack, for ${CAL_SECONDS} seconds. That becomes the floor. Your ceiling comes from the top of your own range.</p>
         <div class="row">
@@ -191,8 +193,18 @@ const channels = CHANNELS.map(() => new ChannelState());
 const scope = new Scope(el("scope"));
 // One canvas, one court per band: scores and streaks stay separate, and
 // switching tabs doesn't wipe what you just did in the other game.
-const courts = { alpha: new Hoop(el("court")), beta: new Hoop(el("court")) };
+const courts = Object.fromEntries(BAND_NAMES.map((n) => [n, new Hoop(el("court"))]));
 const BANDS = {
+  theta: {
+    title: "hoop-theta",
+    eyebrow: "theta neurofeedback · 5–7 Hz",
+    theme: { ball: "#b98ce6", ballDark: "#6c3fa0" },
+    howTo:
+      "<b>How to score:</b> theta is the drowsy, drifting, nearly-asleep rhythm, and the one you have least direct control over. Long slow breaths, eyes " +
+      "closed, let your mind wander rather than focusing on anything — including on the game. It climbs most easily when you stop trying, which makes it " +
+      "the hardest one to chase deliberately. <b>Note:</b> real theta starts at 4 Hz, but 4–5 Hz is where blink energy lives, so this measures 5–7 Hz — " +
+      "theta minus its dirtiest octave.",
+  },
   alpha: {
     title: "hoop-alpha",
     eyebrow: "alpha neurofeedback · 8–12 Hz",
@@ -200,6 +212,16 @@ const BANDS = {
     howTo:
       "<b>How to score:</b> get the ball to the rim and hold it for a third of a second. The reliable way is to close your eyes and let your attention go " +
       "somewhere soft — that's when alpha climbs. Which is why there's a tone: it rises with the ball, so you can play blind.",
+  },
+  gamma: {
+    title: "hoop-gamma",
+    eyebrow: "gamma · 30–45 Hz · mostly muscle",
+    theme: { ball: "#d96fd0", ballDark: "#8a2f84" },
+    howTo:
+      "<b>Read this before you believe the score.</b> Gamma at the scalp, on a dry consumer headband, is overwhelmingly <b>muscle</b>, not brain. Your " +
+      "forehead and jaw put out far more 30–45 Hz than your cortex does, and nothing in software can separate them here. Clenching your jaw or raising " +
+      "your eyebrows will dunk the ball instantly — that is the demonstration, not a bug. The band dodges 60 Hz mains and its harmonic entirely, so what " +
+      "you're seeing is real signal; it just isn't the signal the name implies. Play it as an EMG meter and it's honest.",
   },
   beta: {
     title: "hoop-beta",
@@ -223,7 +245,7 @@ let demo = null;
 let view = "scope";
 
 // calibration
-let baselines = loadBaseline() || { alpha: null, beta: null };
+let baselines = loadBaseline() || Object.fromEntries(BAND_NAMES.map((n) => [n, null]));
 let calSamples = null;
 let calEndsAt = 0;
 let calExtended = false;
@@ -232,7 +254,9 @@ function loadBaseline() {
   try {
     const raw = localStorage.getItem(BASELINE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && parsed.alpha ? parsed : null;
+    // A stored set from before a band was added is unusable — missing bands
+    // would silently fall back to "not calibrated" per tab.
+    return parsed && BAND_NAMES.every((n) => parsed[n]) ? parsed : null;
   } catch {
     return null;
   }
@@ -244,7 +268,7 @@ function saveBaseline(b) {
     /* private window — the games still work this session */
   }
 }
-const band = () => (view === "beta" ? "beta" : "alpha");
+const band = () => (BAND_NAMES.includes(view) ? view : "alpha");
 const court = () => courts[band()];
 const baseline = () => baselines[band()];
 
@@ -408,7 +432,7 @@ function showCalibrationState() {
 }
 
 function startCalibration() {
-  calSamples = { alpha: [], beta: [] };
+  calSamples = Object.fromEntries(BAND_NAMES.map((n) => [n, []]));
   calExtended = false;
   calEndsAt = performance.now() + CAL_SECONDS * 1000;
   showCalibrationState();
@@ -416,8 +440,8 @@ function startCalibration() {
 
 el("calibrate").addEventListener("click", startCalibration);
 el("recal").addEventListener("click", () => {
-  // One pass measures both bands, so recalibrating clears both.
-  baselines = { alpha: null, beta: null };
+  // One pass measures every band, so recalibrating clears them all.
+  baselines = Object.fromEntries(BAND_NAMES.map((n) => [n, null]));
   startCalibration();
 });
 el("use-saved").addEventListener("click", () => {
@@ -495,15 +519,11 @@ setInterval(() => {
   meter.update(now);
 
   if (calSamples) {
-    if (!meter.artifact) {
-      calSamples.alpha.push(meter.alpha);
-      calSamples.beta.push(meter.beta);
-    }
+    if (!meter.artifact) BAND_NAMES.forEach((n) => calSamples[n].push(meter[n]));
     const left = Math.max(0, calEndsAt - now);
     el("calbar-fill").style.width = `${100 - (left / (CAL_SECONDS * 1000)) * 100}%`;
-    el("cal-note").textContent = `${calSamples.alpha.length} clean windows · in-band signal ${meter.lastSd.toFixed(0)} µV (needs under 150) · alpha ${(meter.alpha * 100).toFixed(0)}% · beta ${(
-      meter.beta * 100
-    ).toFixed(0)}%`;
+    el("cal-note").textContent = `${calSamples.alpha.length} clean windows · in-band signal ${meter.lastSd.toFixed(0)} µV (needs under 150) · ` +
+      BAND_NAMES.map((n) => `${n[0]}${(meter[n] * 100).toFixed(0)}%`).join(" ");
     if (left <= 0) {
       // Short on clean windows? Keep listening rather than throwing away what we
       // have — a noisy first pass is a reason to wait longer, not to fail.
@@ -513,19 +533,16 @@ setInterval(() => {
         el("cal-note").textContent = "Noisy start — listening a bit longer. Sit still, jaw slack, blink normally.";
         return;
       }
-      const next = { alpha: baselineFrom(calSamples.alpha), beta: baselineFrom(calSamples.beta) };
+      const next = Object.fromEntries(BAND_NAMES.map((n) => [n, baselineFrom(calSamples[n])]));
       const collected = calSamples.alpha.length;
       calSamples = null;
-      if (next.alpha && next.beta) {
+      if (BAND_NAMES.every((n) => next[n])) {
         baselines = next;
         saveBaseline(next);
-        courts.alpha.reset();
-        courts.beta.reset();
-        const b = next[band()];
+        BAND_NAMES.forEach((n) => courts[n].reset());
         el("cal-note").textContent =
-          `Calibrated on ${collected} windows. Alpha rests at ${(next.alpha.floor * 100).toFixed(0)}% and tops out near ${(next.alpha.ceiling * 100).toFixed(0)}%; ` +
-          `beta rests at ${(next.beta.floor * 100).toFixed(0)}% and tops out near ${(next.beta.ceiling * 100).toFixed(0)}%.`;
-        void b;
+          `Calibrated on ${collected} windows. ` +
+          BAND_NAMES.map((n) => `${n} ${(next[n].floor * 100).toFixed(0)}→${(next[n].ceiling * 100).toFixed(0)}%`).join(" · ");
         if (el("sound").checked && view !== "scope") {
           resumeAudio();
           startTone();

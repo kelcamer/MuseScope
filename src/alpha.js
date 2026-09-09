@@ -15,21 +15,34 @@ import { SAMPLE_RATE } from "./muse.js";
 import { binPower, detrend } from "./signal.js";
 
 const WIN = SAMPLE_RATE; // 1 second → 1 Hz bin spacing
-const ALPHA_LO = 8;
-const ALPHA_HI = 12;
-// Beta stops at 25 rather than 30. Jaw and forehead muscle start showing up
-// around there, and beta is the band muscle contaminates worst — a clenched jaw
-// is the easiest way to fake a high score, so the band is kept as far from EMG
-// as it can be while still being beta.
-const BETA_LO = 13;
-const BETA_HI = 25;
+// The four bands, in Hz. Each one is scored as its share of everything from
+// TOTAL_LO to TOTAL_HI, so they're directly comparable and one pass computes
+// all four.
+//
+// Two of these are compromises worth stating outright:
+//
+// theta really starts at 4 Hz, but 4-5 Hz is exactly where blink energy lives,
+// and letting that in is what broke calibration in the first place. 5-8 Hz is
+// theta minus its dirtiest octave.
+//
+// gamma at the scalp, on a dry consumer headband, is mostly muscle. 30-45 Hz at
+// least dodges 60 Hz mains and its harmonic entirely, but nothing can separate
+// frontal EMG from cortical gamma here. It's a real measurement of something —
+// it just isn't only brain.
+export const BAND_DEFS = {
+  theta: [5, 7],
+  alpha: [8, 12],
+  beta: [13, 25],
+  gamma: [30, 45],
+};
+export const BAND_NAMES = Object.keys(BAND_DEFS);
 // The analysis band starts at 5 Hz, not 2. Blinks and slow drift live below
 // that and are enormous on forehead electrodes — hundreds of microvolts against
 // tens for the rhythms. Including them meant every window looked like an
 // artifact and calibration collected nothing. Excluding them costs a sliver of
 // theta and buys a measurement that is actually about brain rhythm.
 const TOTAL_LO = 5;
-const TOTAL_HI = 30;
+const TOTAL_HI = 45;
 
 // Anything this big in a one-second window is a bumped electrode or a hard
 // clench, not brain rhythm, and gets dropped. Set well above an ordinary blink:
@@ -48,17 +61,20 @@ const ARTIFACT_RMS_UV = 150;
  * come out of one pass over the bins, so a second game costs nothing.
  */
 export function bandShares(buf, n) {
-  let alpha = 0;
-  let beta = 0;
+  const acc = { theta: 0, alpha: 0, beta: 0, gamma: 0 };
   let total = 0;
   for (let f = TOTAL_LO; f <= TOTAL_HI; f++) {
     const p = binPower(buf, n, f);
     total += p;
-    if (f >= ALPHA_LO && f <= ALPHA_HI) alpha += p;
-    if (f >= BETA_LO && f <= BETA_HI) beta += p;
+    for (const name of BAND_NAMES) {
+      const [lo, hi] = BAND_DEFS[name];
+      if (f >= lo && f <= hi) acc[name] += p;
+    }
   }
   const safe = total > 0 ? total : 1;
-  return { alpha: alpha / safe, beta: beta / safe, rms: Math.sqrt(total) };
+  const out = { rms: Math.sqrt(total) };
+  for (const name of BAND_NAMES) out[name] = acc[name] / safe;
+  return out;
 }
 
 /** Kept for the alpha-only callers and the unit checks. */
@@ -72,8 +88,10 @@ export class AlphaMeter {
     this.channels = channels;
     this.names = names;
     this.buf = new Float32Array(WIN);
-    this.alpha = 0; // smoothed share, 0..1
-    this.beta = 0;
+    // smoothed shares, 0..1, one per band
+    BAND_NAMES.forEach((n) => {
+      this[n] = 0;
+    });
     this.rel = 0; // alias for the alpha share, kept for older call sites
     this.artifact = true;
     this.used = [];
@@ -124,12 +142,11 @@ export class AlphaMeter {
     this.last = now;
 
     const picks = this._pick();
-    let sum = 0;
     let count = 0;
     const used = [];
 
     let bandRms = 0;
-    let betaSum = 0;
+    const sums = { theta: 0, alpha: 0, beta: 0, gamma: 0 };
     for (const i of picks) {
       const n = this.channels[i].raw.tail(WIN, this.buf);
       if (n < WIN) continue;
@@ -137,8 +154,7 @@ export class AlphaMeter {
       const band = bandShares(this.buf, n);
       if (band.rms > bandRms) bandRms = band.rms;
       if (band.rms > ARTIFACT_RMS_UV) continue;
-      sum += band.alpha;
-      betaSum += band.beta;
+      for (const name of BAND_NAMES) sums[name] += band[name];
       count++;
       used.push(i);
     }
@@ -151,8 +167,7 @@ export class AlphaMeter {
     if (count) {
       // exponential smoothing, frame-rate independent
       const a = 1 - Math.exp(-dt / this.tau);
-      this.alpha += (sum / count - this.alpha) * a;
-      this.beta += (betaSum / count - this.beta) * a;
+      for (const name of BAND_NAMES) this[name] += (sums[name] / count - this[name]) * a;
       this.rel = this.alpha;
     }
     return this.alpha;
