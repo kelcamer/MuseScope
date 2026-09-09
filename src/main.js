@@ -202,6 +202,7 @@ let view = "scope";
 let baseline = loadBaseline();
 let calSamples = null;
 let calEndsAt = 0;
+let calExtended = false;
 
 function loadBaseline() {
   try {
@@ -374,6 +375,7 @@ function showCalibrationState() {
 
 function startCalibration() {
   calSamples = [];
+  calExtended = false;
   calEndsAt = performance.now() + CAL_SECONDS * 1000;
   showCalibrationState();
 }
@@ -461,8 +463,16 @@ setInterval(() => {
     if (!meter.artifact) calSamples.push(rel);
     const left = Math.max(0, calEndsAt - now);
     el("calbar-fill").style.width = `${100 - (left / (CAL_SECONDS * 1000)) * 100}%`;
-    el("cal-note").textContent = `${calSamples.length} clean windows · forehead amplitude ${meter.lastSd.toFixed(0)} µV · alpha ${(rel * 100).toFixed(0)}%`;
+    el("cal-note").textContent = `${calSamples.length} clean windows · in-band signal ${meter.lastSd.toFixed(0)} µV (needs under 150) · alpha ${(rel * 100).toFixed(0)}%`;
     if (left <= 0) {
+      // Short on clean windows? Keep listening rather than throwing away what we
+      // have — a noisy first pass is a reason to wait longer, not to fail.
+      if (calSamples.length < 10 && !calExtended) {
+        calExtended = true;
+        calEndsAt = now + 15000;
+        el("cal-note").textContent = "Noisy start — listening a bit longer. Sit still, jaw slack, blink normally.";
+        return;
+      }
       const b = baselineFrom(calSamples);
       const collected = calSamples.length;
       calSamples = null;
@@ -478,8 +488,8 @@ setInterval(() => {
       } else {
         // Say what was actually wrong rather than just "failed".
         el("cal-note").textContent =
-          `Not enough clean signal: ${collected} usable windows out of ~${CAL_SECONDS * 10}. The forehead pair was reading ${meter.lastSd.toFixed(0)} µV ` +
-          `(needs to stay under 180). Usually that's the reference pad in the middle of your forehead — wipe it and the AF7/AF8 pads with a damp finger, ` +
+          `Not enough clean signal: ${collected} usable windows. AF7/AF8 were reading ${meter.lastSd.toFixed(0)} µV in the 5-30 Hz band ` +
+          `(needs to stay under 150). Usually that's the reference pad in the middle of your forehead — wipe it and the AF7/AF8 pads with a damp finger, ` +
           `then sit still and try again.`;
         status("calibration failed", "bad");
       }

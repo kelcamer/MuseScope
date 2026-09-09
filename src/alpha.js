@@ -17,7 +17,12 @@ import { binPower, detrend } from "./signal.js";
 const WIN = SAMPLE_RATE; // 1 second → 1 Hz bin spacing
 const ALPHA_LO = 8;
 const ALPHA_HI = 12;
-const TOTAL_LO = 2;
+// The analysis band starts at 5 Hz, not 2. Blinks and slow drift live below
+// that and are enormous on forehead electrodes — hundreds of microvolts against
+// tens for the rhythms. Including them meant every window looked like an
+// artifact and calibration collected nothing. Excluding them costs a sliver of
+// theta and buys a measurement that is actually about brain rhythm.
+const TOTAL_LO = 5;
 const TOTAL_HI = 30;
 
 // Anything this big in a one-second window is a bumped electrode or a hard
@@ -26,9 +31,13 @@ const TOTAL_HI = 30;
 // every time someone blinks makes the game unplayable. Blinks don't need to be
 // rejected to be handled — they land outside the alpha band, so they already
 // push the ratio down on their own.
-const ARTIFACT_SD_UV = 180;
+// Rejection threshold, applied to the RMS of the 5-30 Hz band rather than to
+// the raw swing. In-band EEG runs 5-30 µV; muscle and a knocked electrode run
+// far above. A blink can be 400 µV peak and still pass, which is correct — it
+// isn't alpha, but it also isn't a reason to stop measuring.
+const ARTIFACT_RMS_UV = 150;
 
-/** Relative alpha for one window of raw microvolts. */
+/** Alpha's share of the 5-30 Hz band, plus that band's RMS in microvolts. */
 export function relativeAlpha(buf, n) {
   let alpha = 0;
   let total = 0;
@@ -37,7 +46,7 @@ export function relativeAlpha(buf, n) {
     total += p;
     if (f >= ALPHA_LO && f <= ALPHA_HI) alpha += p;
   }
-  return { alpha, total, rel: total > 0 ? alpha / total : 0 };
+  return { alpha, total, rel: total > 0 ? alpha / total : 0, rms: Math.sqrt(total) };
 }
 
 export class AlphaMeter {
@@ -100,18 +109,19 @@ export class AlphaMeter {
     let count = 0;
     const used = [];
 
-    let worstSd = 0;
+    let bandRms = 0;
     for (const i of picks) {
       const n = this.channels[i].raw.tail(WIN, this.buf);
       if (n < WIN) continue;
-      const amp = detrend(this.buf, n).sd;
-      if (amp > worstSd) worstSd = amp;
-      if (amp > ARTIFACT_SD_UV) continue;
-      sum += relativeAlpha(this.buf, n).rel;
+      detrend(this.buf, n); // kill the offset so it can't leak across the bins
+      const band = relativeAlpha(this.buf, n);
+      if (band.rms > bandRms) bandRms = band.rms;
+      if (band.rms > ARTIFACT_RMS_UV) continue;
+      sum += band.rel;
       count++;
       used.push(i);
     }
-    this.lastSd = worstSd;
+    this.lastSd = bandRms;
 
     // One channel having a moment shouldn't veto a clean one — the ball is only
     // held when there is nothing usable left to read.
@@ -129,7 +139,7 @@ export class AlphaMeter {
 
 /** Turn a set of calibration samples into the floor and ceiling of the game. */
 export function baselineFrom(samples) {
-  if (samples.length < 15) return null;
+  if (samples.length < 10) return null;
   const sorted = samples.slice().sort((a, b) => a - b);
   const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
   return { floor: q(0.5), ceiling: Math.max(q(0.9), q(0.5) * 1.25), n: samples.length };
