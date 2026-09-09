@@ -17,6 +17,12 @@ import { binPower, detrend } from "./signal.js";
 const WIN = SAMPLE_RATE; // 1 second → 1 Hz bin spacing
 const ALPHA_LO = 8;
 const ALPHA_HI = 12;
+// Beta stops at 25 rather than 30. Jaw and forehead muscle start showing up
+// around there, and beta is the band muscle contaminates worst — a clenched jaw
+// is the easiest way to fake a high score, so the band is kept as far from EMG
+// as it can be while still being beta.
+const BETA_LO = 13;
+const BETA_HI = 25;
 // The analysis band starts at 5 Hz, not 2. Blinks and slow drift live below
 // that and are enormous on forehead electrodes — hundreds of microvolts against
 // tens for the rhythms. Including them meant every window looked like an
@@ -37,16 +43,28 @@ const TOTAL_HI = 30;
 // isn't alpha, but it also isn't a reason to stop measuring.
 const ARTIFACT_RMS_UV = 150;
 
-/** Alpha's share of the 5-30 Hz band, plus that band's RMS in microvolts. */
-export function relativeAlpha(buf, n) {
+/**
+ * Each band's share of 5-30 Hz, plus that band's RMS in microvolts. Both bands
+ * come out of one pass over the bins, so a second game costs nothing.
+ */
+export function bandShares(buf, n) {
   let alpha = 0;
+  let beta = 0;
   let total = 0;
   for (let f = TOTAL_LO; f <= TOTAL_HI; f++) {
     const p = binPower(buf, n, f);
     total += p;
     if (f >= ALPHA_LO && f <= ALPHA_HI) alpha += p;
+    if (f >= BETA_LO && f <= BETA_HI) beta += p;
   }
-  return { alpha, total, rel: total > 0 ? alpha / total : 0, rms: Math.sqrt(total) };
+  const safe = total > 0 ? total : 1;
+  return { alpha: alpha / safe, beta: beta / safe, rms: Math.sqrt(total) };
+}
+
+/** Kept for the alpha-only callers and the unit checks. */
+export function relativeAlpha(buf, n) {
+  const b = bandShares(buf, n);
+  return { rel: b.alpha, rms: b.rms };
 }
 
 export class AlphaMeter {
@@ -54,8 +72,9 @@ export class AlphaMeter {
     this.channels = channels;
     this.names = names;
     this.buf = new Float32Array(WIN);
-    this.rel = 0; // smoothed
-    this.raw = 0; // this window
+    this.alpha = 0; // smoothed share, 0..1
+    this.beta = 0;
+    this.rel = 0; // alias for the alpha share, kept for older call sites
     this.artifact = true;
     this.used = [];
     this.tau = 0.45; // seconds of smoothing — enough to stop jitter, not enough to lag
@@ -99,7 +118,7 @@ export class AlphaMeter {
     return this.channels.map((_, i) => i).filter((i) => this.channels[i].quality.grade === "good" || this.channels[i].quality.grade === "fair");
   }
 
-  /** Call ~10×/s. Returns the smoothed share of power in the alpha band. */
+  /** Call ~10×/s. Updates `alpha` and `beta`; returns the alpha share. */
   update(now = performance.now()) {
     const dt = this.last ? Math.min(0.5, (now - this.last) / 1000) : 0.1;
     this.last = now;
@@ -110,14 +129,16 @@ export class AlphaMeter {
     const used = [];
 
     let bandRms = 0;
+    let betaSum = 0;
     for (const i of picks) {
       const n = this.channels[i].raw.tail(WIN, this.buf);
       if (n < WIN) continue;
       detrend(this.buf, n); // kill the offset so it can't leak across the bins
-      const band = relativeAlpha(this.buf, n);
+      const band = bandShares(this.buf, n);
       if (band.rms > bandRms) bandRms = band.rms;
       if (band.rms > ARTIFACT_RMS_UV) continue;
-      sum += band.rel;
+      sum += band.alpha;
+      betaSum += band.beta;
       count++;
       used.push(i);
     }
@@ -128,12 +149,13 @@ export class AlphaMeter {
     this.used = used;
     this.artifact = count === 0;
     if (count) {
-      this.raw = sum / count;
       // exponential smoothing, frame-rate independent
       const a = 1 - Math.exp(-dt / this.tau);
-      this.rel += (this.raw - this.rel) * a;
+      this.alpha += (sum / count - this.alpha) * a;
+      this.beta += (betaSum / count - this.beta) * a;
+      this.rel = this.alpha;
     }
-    return this.rel;
+    return this.alpha;
   }
 }
 

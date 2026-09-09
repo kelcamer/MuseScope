@@ -28,6 +28,7 @@ export class Hoop {
     this.flash = 0;
     this.last = 0;
     this.colors = null;
+    this.theme = null;
   }
 
   reset() {
@@ -37,6 +38,12 @@ export class Hoop {
     this.totalMs = 0;
     this.y = 0;
     this.inZoneSince = 0;
+  }
+
+  /** Ball colours, so two bands can share one court without looking identical. */
+  setTheme(theme) {
+    this.theme = theme;
+    this.colors = null; // re-resolve on the next frame
   }
 
   setLift(v, artifact) {
@@ -54,8 +61,8 @@ export class Hoop {
       dim: pick("--ink-faint", "#67818a"),
       accent: pick("--accent", "#3fc8d6"),
       good: pick("--good", "#5ecf9e"),
-      ball: "#e8823c",
-      ballDark: "#b8551b",
+      ball: (this.theme && this.theme.ball) || "#e8823c",
+      ballDark: (this.theme && this.theme.ballDark) || "#b8551b",
     };
     return this.colors;
   }
@@ -139,7 +146,7 @@ export class Hoop {
     ctx.strokeRect(cx - S(19), rimY - S(26), S(38), S(28));
 
     const rimW = S(46);
-    ctx.strokeStyle = "#e8823c";
+    ctx.strokeStyle = c.ball;
     ctx.lineWidth = S(3.5);
     ctx.beginPath();
     ctx.ellipse(cx, rimY, rimW / 2, S(6), 0, 0, Math.PI * 2);
@@ -200,7 +207,7 @@ export class Hoop {
     // ---- the ball
     const ballY = floorY - r - (floorY - r - rimY) * this.y;
     const grad = ctx.createRadialGradient(cx - r * 0.35, ballY - r * 0.4, r * 0.1, cx, ballY, r);
-    grad.addColorStop(0, "#f59a55");
+    grad.addColorStop(0, c.ball);
     grad.addColorStop(1, c.ballDark);
     ctx.globalAlpha = this.artifact ? 0.4 : 1;
     ctx.fillStyle = grad;

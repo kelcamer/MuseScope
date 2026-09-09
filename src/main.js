@@ -16,7 +16,7 @@ import { Hoop } from "./hoop.js";
 import { startTone, stopTone, setToneLift, swish, bounce, resumeAudio } from "./audio.js";
 import "./styles.css";
 
-const BASELINE_KEY = "museScopeAlphaBaselineV1";
+const BASELINE_KEY = "museScopeBaselinesV2";
 const CAL_SECONDS = 20;
 
 const app = document.getElementById("app");
@@ -61,7 +61,8 @@ app.innerHTML = `
 
     <nav class="tabs" id="tabs" hidden>
       <button class="tab is-on" data-view="scope">Scope</button>
-      <button class="tab" data-view="hoop">Hoop</button>
+      <button class="tab" data-view="alpha">Alpha hoop</button>
+      <button class="tab" data-view="beta">Beta hoop</button>
     </nav>
 
     <section class="panel panel--scope" id="view-scope" hidden>
@@ -126,12 +127,12 @@ app.innerHTML = `
     <section class="panel" id="view-hoop" hidden>
       <div class="hoop-head">
         <div>
-          <span class="eyebrow">alpha neurofeedback</span>
-          <h1 class="display">Hoop</h1>
+          <span class="eyebrow" id="game-eyebrow">alpha neurofeedback</span>
+          <h1 class="display" id="game-title">Alpha hoop</h1>
         </div>
         <div class="pills">
           <span class="pill">baskets <b id="baskets">0</b></span>
-          <span class="pill">alpha <b id="alpha-pct">—</b></span>
+          <span class="pill"><span id="band-label">alpha</span> <b id="alpha-pct">—</b></span>
           <span class="pill">lift <b id="lift-pct">—</b></span>
           <span class="pill">in the zone <b id="zone-pct">—</b></span>
         </div>
@@ -139,8 +140,9 @@ app.innerHTML = `
 
       <div id="cal-wrap">
         <p class="lede">
-          The ball rises with <b>alpha</b> — the 8–12 Hz rhythm that grows when your visual system stops working at something. Everyone's alpha sits at
-          a different level, so first it measures yours.
+          The ball rises with a brain rhythm: <b>alpha</b> (8–12 Hz), which grows when your visual system stops working at something, or <b>beta</b>
+          (13–25 Hz), which grows when you're working at something. Everyone sits at a different level, so first it measures yours — one calibration
+          covers both games.
         </p>
         <p class="note">Sit still, <b>eyes open</b>, jaw slack, for ${CAL_SECONDS} seconds. That becomes the floor. Your ceiling comes from the top of your own range.</p>
         <div class="row">
@@ -162,10 +164,7 @@ app.innerHTML = `
           <button class="btn btn--sm" id="recal">Recalibrate</button>
           <button class="btn btn--sm" id="reset-score">Reset score</button>
         </div>
-        <p class="note">
-          <b>How to score:</b> get the ball to the rim and hold it there for a third of a second. The reliable way is to close your eyes and let your
-          attention go somewhere soft — that's when alpha climbs. Which is why there's a tone: it rises with the ball, so you can play blind.
-        </p>
+        <p class="note" id="how-to"></p>
         <p class="note">
           Blinks and jaw clenches make the ball go <b>down</b>, not up — the score is alpha as a share of everything else, so anything that adds
           broadband noise dilutes it. Only a window with nothing usable in it freezes the ball. The ball reads the forehead pair,
@@ -188,7 +187,29 @@ app.innerHTML = `
 const el = (id) => document.getElementById(id);
 const channels = CHANNELS.map(() => new ChannelState());
 const scope = new Scope(el("scope"));
-const hoop = new Hoop(el("court"));
+// One canvas, one court per band: scores and streaks stay separate, and
+// switching tabs doesn't wipe what you just did in the other game.
+const courts = { alpha: new Hoop(el("court")), beta: new Hoop(el("court")) };
+const BANDS = {
+  alpha: {
+    title: "Alpha hoop",
+    eyebrow: "alpha neurofeedback · 8–12 Hz",
+    theme: { ball: "#e8823c", ballDark: "#b8551b" },
+    howTo:
+      "<b>How to score:</b> get the ball to the rim and hold it for a third of a second. The reliable way is to close your eyes and let your attention go " +
+      "somewhere soft — that's when alpha climbs. Which is why there's a tone: it rises with the ball, so you can play blind.",
+  },
+  beta: {
+    title: "Beta hoop",
+    eyebrow: "beta neurofeedback · 13–25 Hz",
+    theme: { ball: "#57b7e8", ballDark: "#1d6c99" },
+    howTo:
+      "<b>How to score:</b> the opposite skill. Beta rises when you're actively working at something — count backwards from 300 by sevens, hold a phone " +
+      "number in your head, plan a route. Eyes open. Closing them will sink the ball, which is the point: this game and the alpha one can't both be won " +
+      "at once. <b>Careful:</b> jaw and forehead muscle spill into beta, so clenching raises the score without meaning anything. Keep your jaw slack " +
+      "and it stays honest.",
+  },
+};
 let channelNames = CHANNELS.slice();
 const meter = new AlphaMeter(channels, channelNames);
 
@@ -200,7 +221,7 @@ let demo = null;
 let view = "scope";
 
 // calibration
-let baseline = loadBaseline();
+let baselines = loadBaseline() || { alpha: null, beta: null };
 let calSamples = null;
 let calEndsAt = 0;
 let calExtended = false;
@@ -208,7 +229,8 @@ let calExtended = false;
 function loadBaseline() {
   try {
     const raw = localStorage.getItem(BASELINE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && parsed.alpha ? parsed : null;
   } catch {
     return null;
   }
@@ -217,9 +239,12 @@ function saveBaseline(b) {
   try {
     localStorage.setItem(BASELINE_KEY, JSON.stringify(b));
   } catch {
-    /* private window — the game still works this session */
+    /* private window — the games still work this session */
   }
 }
+const band = () => (view === "beta" ? "beta" : "alpha");
+const court = () => courts[band()];
+const baseline = () => baselines[band()];
 
 function setNotch(on) {
   channels.forEach((c) => c.setNotch(on ? mainsHz : 0));
@@ -235,7 +260,7 @@ function showLive(on) {
   el("gate").hidden = on;
   el("tabs").hidden = !on;
   el("view-scope").hidden = !on || view !== "scope";
-  el("view-hoop").hidden = !on || view !== "hoop";
+  el("view-hoop").hidden = !on || view === "scope";
   if (!on) stopTone();
 }
 
@@ -243,14 +268,20 @@ function setView(next) {
   view = next;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-on", t.dataset.view === next));
   showLive(!el("tabs").hidden);
-  if (next === "hoop") {
-    showCalibrationState();
-    if (el("sound").checked && baseline) {
-      resumeAudio();
-      startTone();
-    }
-  } else {
+  if (next === "scope") {
     stopTone();
+    return;
+  }
+  const cfg = BANDS[band()];
+  el("game-title").textContent = cfg.title;
+  el("game-eyebrow").textContent = cfg.eyebrow;
+  el("band-label").textContent = band();
+  el("how-to").innerHTML = cfg.howTo;
+  court().setTheme(cfg.theme);
+  showCalibrationState();
+  if (el("sound").checked && baseline()) {
+    resumeAudio();
+    startTone();
   }
 }
 
@@ -367,15 +398,15 @@ el("mains").addEventListener("change", (e) => {
 // ---- the game ------------------------------------------------------------
 function showCalibrationState() {
   const calibrating = calSamples !== null;
-  el("cal-wrap").hidden = !!baseline && !calibrating;
-  el("game-wrap").hidden = !baseline || calibrating;
+  el("cal-wrap").hidden = !!baseline() && !calibrating;
+  el("game-wrap").hidden = !baseline() || calibrating;
   el("calbar").hidden = !calibrating;
   el("calibrate").disabled = calibrating;
-  el("use-saved").hidden = !(loadBaseline() && !baseline);
+  el("use-saved").hidden = !(loadBaseline() && !baseline());
 }
 
 function startCalibration() {
-  calSamples = [];
+  calSamples = { alpha: [], beta: [] };
   calExtended = false;
   calEndsAt = performance.now() + CAL_SECONDS * 1000;
   showCalibrationState();
@@ -383,16 +414,17 @@ function startCalibration() {
 
 el("calibrate").addEventListener("click", startCalibration);
 el("recal").addEventListener("click", () => {
-  baseline = null;
+  // One pass measures both bands, so recalibrating clears both.
+  baselines = { alpha: null, beta: null };
   startCalibration();
 });
 el("use-saved").addEventListener("click", () => {
-  baseline = loadBaseline();
+  baselines = loadBaseline() || baselines;
   showCalibrationState();
 });
-el("reset-score").addEventListener("click", () => hoop.reset());
+el("reset-score").addEventListener("click", () => court().reset());
 el("sound").addEventListener("change", (e) => {
-  if (e.target.checked && view === "hoop") {
+  if (e.target.checked && view !== "scope") {
     resumeAudio();
     startTone();
   } else {
@@ -446,7 +478,7 @@ function frame(now) {
   } else {
     // a hidden canvas has zero width — never try to draw into it
     if (el("view-hoop").hidden || el("game-wrap").hidden) return;
-    if (hoop.step(now) === "scored") {
+    if (court().step(now) === "scored") {
       swish();
       setTimeout(bounce, 720);
     }
@@ -458,31 +490,41 @@ requestAnimationFrame(frame);
 setInterval(() => {
   if (el("tabs").hidden) return;
   const now = performance.now();
-  const rel = meter.update(now);
+  meter.update(now);
 
   if (calSamples) {
-    if (!meter.artifact) calSamples.push(rel);
+    if (!meter.artifact) {
+      calSamples.alpha.push(meter.alpha);
+      calSamples.beta.push(meter.beta);
+    }
     const left = Math.max(0, calEndsAt - now);
     el("calbar-fill").style.width = `${100 - (left / (CAL_SECONDS * 1000)) * 100}%`;
-    el("cal-note").textContent = `${calSamples.length} clean windows · in-band signal ${meter.lastSd.toFixed(0)} µV (needs under 150) · alpha ${(rel * 100).toFixed(0)}%`;
+    el("cal-note").textContent = `${calSamples.alpha.length} clean windows · in-band signal ${meter.lastSd.toFixed(0)} µV (needs under 150) · alpha ${(meter.alpha * 100).toFixed(0)}% · beta ${(
+      meter.beta * 100
+    ).toFixed(0)}%`;
     if (left <= 0) {
       // Short on clean windows? Keep listening rather than throwing away what we
       // have — a noisy first pass is a reason to wait longer, not to fail.
-      if (calSamples.length < 10 && !calExtended) {
+      if (calSamples.alpha.length < 10 && !calExtended) {
         calExtended = true;
         calEndsAt = now + 15000;
         el("cal-note").textContent = "Noisy start — listening a bit longer. Sit still, jaw slack, blink normally.";
         return;
       }
-      const b = baselineFrom(calSamples);
-      const collected = calSamples.length;
+      const next = { alpha: baselineFrom(calSamples.alpha), beta: baselineFrom(calSamples.beta) };
+      const collected = calSamples.alpha.length;
       calSamples = null;
-      if (b) {
-        baseline = b;
-        saveBaseline(b);
-        hoop.reset();
-        el("cal-note").textContent = `Calibrated on ${collected} windows. Resting alpha ${(b.floor * 100).toFixed(0)}%, ceiling ${(b.ceiling * 100).toFixed(0)}%.`;
-        if (el("sound").checked && view === "hoop") {
+      if (next.alpha && next.beta) {
+        baselines = next;
+        saveBaseline(next);
+        courts.alpha.reset();
+        courts.beta.reset();
+        const b = next[band()];
+        el("cal-note").textContent =
+          `Calibrated on ${collected} windows. Alpha rests at ${(next.alpha.floor * 100).toFixed(0)}% and tops out near ${(next.alpha.ceiling * 100).toFixed(0)}%; ` +
+          `beta rests at ${(next.beta.floor * 100).toFixed(0)}% and tops out near ${(next.beta.ceiling * 100).toFixed(0)}%.`;
+        void b;
+        if (el("sound").checked && view !== "scope") {
           resumeAudio();
           startTone();
         }
@@ -499,15 +541,17 @@ setInterval(() => {
     return;
   }
 
-  if (!baseline) return;
-  const lift = liftFrom(rel, baseline, Number(el("sens").value));
-  hoop.setLift(lift, meter.artifact);
+  if (view === "scope" || !baseline()) return;
+  const share = meter[band()];
+  const lift = liftFrom(share, baseline(), Number(el("sens").value));
+  const c = court();
+  c.setLift(lift, meter.artifact);
   if (el("sound").checked) setToneLift(lift);
 
-  el("alpha-pct").textContent = `${(rel * 100).toFixed(0)}%`;
+  el("alpha-pct").textContent = `${(share * 100).toFixed(0)}%`;
   el("lift-pct").textContent = meter.artifact ? "held" : `${Math.round(lift * 100)}%`;
-  el("baskets").textContent = hoop.score;
-  el("zone-pct").textContent = hoop.totalMs > 1000 ? `${Math.round((hoop.zoneMs / hoop.totalMs) * 100)}%` : "—";
+  el("baskets").textContent = c.score;
+  el("zone-pct").textContent = c.totalMs > 1000 ? `${Math.round((c.zoneMs / c.totalMs) * 100)}%` : "—";
   el("used-chans").textContent = meter.used.length ? meter.used.map((i) => channelNames[i]).join(" + ") : "AF7/AF8 unusable";
 }, 100);
 
