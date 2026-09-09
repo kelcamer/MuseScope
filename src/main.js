@@ -136,6 +136,9 @@ app.innerHTML = `
         <div class="pills">
           <span class="pill">baskets <b id="baskets">0</b></span>
           <span class="pill"><span id="band-label">alpha</span> <b id="alpha-pct">—</b></span>
+          <span class="pill" title="This band's own amplitude. A share can fall because the band shrank or because another band grew — this tells you which.">
+            absolute <b id="band-uv">—</b>
+          </span>
           <span class="pill">lift <b id="lift-pct">—</b></span>
           <span class="pill">in the zone <b id="zone-pct">—</b></span>
         </div>
@@ -169,6 +172,8 @@ app.innerHTML = `
         </div>
         <p class="note" id="how-to"></p>
         <p class="note">
+          The <b>absolute</b> pill is that band's own amplitude, in microvolts. The share is what scores, but a share can drop because the band shrank
+          <em>or</em> because another band grew — if the percentage falls while the microvolts hold steady, you steered a different rhythm, not this one.
           Blinks and jaw clenches make the ball go <b>down</b>, not up — the score is alpha as a share of everything else, so anything that adds
           broadband noise dilutes it. Only a window with nothing usable in it freezes the ball. The ball reads the forehead pair,
           <b id="used-chans">AF7 + AF8</b>. Textbook alpha is strongest at the back of the head, but on this headband the ear
@@ -568,6 +573,7 @@ setInterval(() => {
   if (el("sound").checked) setToneLift(lift);
 
   el("alpha-pct").textContent = `${(share * 100).toFixed(0)}%`;
+  el("band-uv").textContent = `${meter.uv[band()].toFixed(1)} µV`;
   el("lift-pct").textContent = meter.artifact ? "held" : `${Math.round(lift * 100)}%`;
   el("baskets").textContent = c.score;
   el("zone-pct").textContent = c.totalMs > 1000 ? `${Math.round((c.zoneMs / c.totalMs) * 100)}%` : "—";

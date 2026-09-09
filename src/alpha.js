@@ -72,8 +72,15 @@ export function bandShares(buf, n) {
     }
   }
   const safe = total > 0 ? total : 1;
-  const out = { rms: Math.sqrt(total) };
-  for (const name of BAND_NAMES) out[name] = acc[name] / safe;
+  // Two figures per band: its share of the analysed range, and its own
+  // amplitude in microvolts. The share is what the games score, but a share can
+  // fall because the band shrank OR because everything else grew — only the
+  // microvolts tell you which.
+  const out = { rms: Math.sqrt(total), uv: {} };
+  for (const name of BAND_NAMES) {
+    out[name] = acc[name] / safe;
+    out.uv[name] = Math.sqrt(acc[name]);
+  }
   return out;
 }
 
@@ -88,9 +95,11 @@ export class AlphaMeter {
     this.channels = channels;
     this.names = names;
     this.buf = new Float32Array(WIN);
-    // smoothed shares, 0..1, one per band
+    // smoothed shares, 0..1, one per band, plus each band's own amplitude in µV
+    this.uv = {};
     BAND_NAMES.forEach((n) => {
       this[n] = 0;
+      this.uv[n] = 0;
     });
     this.rel = 0; // alias for the alpha share, kept for older call sites
     this.artifact = true;
@@ -147,6 +156,7 @@ export class AlphaMeter {
 
     let bandRms = 0;
     const sums = { theta: 0, alpha: 0, beta: 0, gamma: 0 };
+    const uvSums = { theta: 0, alpha: 0, beta: 0, gamma: 0 };
     for (const i of picks) {
       const n = this.channels[i].raw.tail(WIN, this.buf);
       if (n < WIN) continue;
@@ -154,7 +164,10 @@ export class AlphaMeter {
       const band = bandShares(this.buf, n);
       if (band.rms > bandRms) bandRms = band.rms;
       if (band.rms > ARTIFACT_RMS_UV) continue;
-      for (const name of BAND_NAMES) sums[name] += band[name];
+      for (const name of BAND_NAMES) {
+        sums[name] += band[name];
+        uvSums[name] += band.uv[name];
+      }
       count++;
       used.push(i);
     }
@@ -167,7 +180,10 @@ export class AlphaMeter {
     if (count) {
       // exponential smoothing, frame-rate independent
       const a = 1 - Math.exp(-dt / this.tau);
-      for (const name of BAND_NAMES) this[name] += (sums[name] / count - this[name]) * a;
+      for (const name of BAND_NAMES) {
+        this[name] += (sums[name] / count - this[name]) * a;
+        this.uv[name] += (uvSums[name] / count - this.uv[name]) * a;
+      }
       this.rel = this.alpha;
     }
     return this.alpha;
