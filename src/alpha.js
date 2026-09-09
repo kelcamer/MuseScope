@@ -30,6 +30,12 @@ const WIN = SAMPLE_RATE; // 1 second → 1 Hz bin spacing
 // frontal EMG from cortical gamma here. It's a real measurement of something —
 // it just isn't only brain.
 export const BAND_DEFS = {
+  // Delta (2-4 Hz) sits BELOW the 5 Hz analysis floor the other bands share.
+  // It is the slow, drowsy rhythm — and also exactly where blinks, eye-rolls
+  // and head movement live, so on a dry forehead headband it is the least
+  // brain-pure game of all. It gets its own measurement pass (see bandShares)
+  // and doubles as the drift monitor that guards theta from low-frequency leak.
+  delta: [2, 4],
   theta: [5, 7],
   alpha: [8, 12],
   beta: [13, 25],
@@ -43,6 +49,10 @@ export const BAND_NAMES = Object.keys(BAND_DEFS);
 // theta and buys a measurement that is actually about brain rhythm.
 const TOTAL_LO = 5;
 const TOTAL_HI = 45;
+// Delta's own range, measured separately so it can't shift the 5-45 Hz
+// denominator the other four bands share.
+const DELTA_LO = 2;
+const DELTA_HI = 4;
 
 // Anything this big in a one-second window is a bumped electrode or a hard
 // clench, not brain rhythm, and gets dropped. Set well above an ordinary blink:
@@ -56,30 +66,62 @@ const TOTAL_HI = 45;
 // isn't alpha, but it also isn't a reason to stop measuring.
 const ARTIFACT_RMS_UV = 150;
 
+// Per-band drift guard. If this fraction of a band's power is jammed into its
+// lowest 1-Hz bin, the reading is spillover from the rhythm below it, not the
+// band itself, and the game holds the ball instead of scoring it. Only theta
+// needs it: it borders the 5 Hz floor where delta and slow movement pile up,
+// and that leak is exactly what was faking theta scores. The other bands sit
+// far enough from their neighbours that the same leak never reaches them.
+const DRIFT_GUARD = { theta: 0.5 };
+
 /**
  * Each band's share of 5-30 Hz, plus that band's RMS in microvolts. Both bands
  * come out of one pass over the bins, so a second game costs nothing.
  */
 export function bandShares(buf, n) {
-  const acc = { theta: 0, alpha: 0, beta: 0, gamma: 0 };
+  const acc = {};
+  const lowBin = {}; // power in each band's lowest 1-Hz bin, for the drift edge
+  for (const name of BAND_NAMES) acc[name] = 0;
+
+  // Delta gets its own pass below 5 Hz. It does NOT enter `total`, so adding it
+  // cannot move the other four bands' scores by a hair.
+  let deltaPow = 0;
+  let deltaLowBin = 0;
+  for (let f = DELTA_LO; f <= DELTA_HI; f++) {
+    const p = binPower(buf, n, f);
+    deltaPow += p;
+    if (f === DELTA_LO) deltaLowBin = p;
+  }
+
   let total = 0;
   for (let f = TOTAL_LO; f <= TOTAL_HI; f++) {
     const p = binPower(buf, n, f);
     total += p;
     for (const name of BAND_NAMES) {
       const [lo, hi] = BAND_DEFS[name];
-      if (f >= lo && f <= hi) acc[name] += p;
+      if (f >= lo && f <= hi) {
+        acc[name] += p;
+        if (f === lo) lowBin[name] = p;
+      }
     }
   }
   const safe = total > 0 ? total : 1;
-  // Two figures per band: its share of the analysed range, and its own
-  // amplitude in microvolts. The share is what the games score, but a share can
-  // fall because the band shrank OR because everything else grew — only the
-  // microvolts tell you which.
-  const out = { rms: Math.sqrt(total), uv: {} };
+  // Three figures per band: its share of the analysed range, its own amplitude
+  // in microvolts, and `edge` — the fraction of the band's power sitting in its
+  // lowest 1-Hz bin. A strong rhythm one band below leaks upward into that bin,
+  // so a high edge means the reading is spillover, not the band itself. That's
+  // what the theta drift guard watches.
+  const out = { rms: Math.sqrt(total), uv: {}, edge: {} };
   for (const name of BAND_NAMES) {
-    out[name] = acc[name] / safe;
-    out.uv[name] = Math.sqrt(acc[name]);
+    if (name === "delta") {
+      out.delta = deltaPow / (deltaPow + safe);
+      out.uv.delta = Math.sqrt(deltaPow);
+      out.edge.delta = deltaPow > 0 ? deltaLowBin / deltaPow : 0;
+    } else {
+      out[name] = acc[name] / safe;
+      out.uv[name] = Math.sqrt(acc[name]);
+      out.edge[name] = acc[name] > 0 ? (lowBin[name] || 0) / acc[name] : 0;
+    }
   }
   return out;
 }
@@ -96,10 +138,13 @@ export class AlphaMeter {
     this.names = names;
     this.buf = new Float32Array(WIN);
     // smoothed shares, 0..1, one per band, plus each band's own amplitude in µV
+    // and its bottom-bin `edge` (how much of the band is spillover from below).
     this.uv = {};
+    this.edge = {};
     BAND_NAMES.forEach((n) => {
       this[n] = 0;
       this.uv[n] = 0;
+      this.edge[n] = 0;
     });
     this.rel = 0; // alias for the alpha share, kept for older call sites
     this.artifact = true;
@@ -164,8 +209,14 @@ export class AlphaMeter {
     const used = [];
 
     let bandRms = 0;
-    const sums = { theta: 0, alpha: 0, beta: 0, gamma: 0 };
-    const uvSums = { theta: 0, alpha: 0, beta: 0, gamma: 0 };
+    const sums = {};
+    const uvSums = {};
+    const edgeSums = {};
+    for (const name of BAND_NAMES) {
+      sums[name] = 0;
+      uvSums[name] = 0;
+      edgeSums[name] = 0;
+    }
     for (const i of picks) {
       const n = this.channels[i].raw.tail(WIN, this.buf);
       if (n < WIN) continue;
@@ -176,6 +227,7 @@ export class AlphaMeter {
       for (const name of BAND_NAMES) {
         sums[name] += band[name];
         uvSums[name] += band.uv[name];
+        edgeSums[name] += band.edge[name];
       }
       count++;
       used.push(i);
@@ -192,10 +244,18 @@ export class AlphaMeter {
       for (const name of BAND_NAMES) {
         this[name] += (sums[name] / count - this[name]) * a;
         this.uv[name] += (uvSums[name] / count - this.uv[name]) * a;
+        this.edge[name] += (edgeSums[name] / count - this.edge[name]) * a;
       }
       this.rel = this.alpha;
     }
     return this.alpha;
+  }
+
+  /** Is the scored band mostly spillover from the rhythm below it? When true,
+   *  the game holds the ball rather than counting a drift-faked score. */
+  contamFor(name) {
+    const limit = DRIFT_GUARD[name];
+    return limit != null && this.edge[name] > limit;
   }
 }
 

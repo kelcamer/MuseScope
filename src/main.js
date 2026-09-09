@@ -65,6 +65,7 @@ app.innerHTML = `
 
     <nav class="tabs" id="tabs" hidden>
       <button class="tab is-on" data-view="scope">Scope</button>
+      <button class="tab" data-view="delta">hoop-delta</button>
       <button class="tab" data-view="theta">hoop-theta</button>
       <button class="tab" data-view="alpha">hoop-alpha</button>
       <button class="tab" data-view="beta">hoop-beta</button>
@@ -214,6 +215,18 @@ const scope = new Scope(el("scope"));
 // switching tabs doesn't wipe what you just did in the other game.
 const courts = Object.fromEntries(BAND_NAMES.map((n) => [n, new Hoop(el("court"))]));
 const BANDS = {
+  delta: {
+    title: "hoop-delta",
+    eyebrow: "delta · 2–4 Hz · slow / drowsy · blink-prone",
+    theme: { ball: "#6f7be8", ballDark: "#343f9e" },
+    howTo:
+      "<b>Read this before you believe the score.</b> Delta is the big, slow rhythm of deep sleep and drowsiness (2–4 Hz) — and it's also exactly where " +
+      "<b>blinks, eye-rolls and head movement</b> live. Every other game measures above 5 Hz on purpose, to keep that stuff out; this one goes below it, " +
+      "so it is the least brain-pure of them all. To climb it honestly: sit very still, eyes soft or closed, breathe slow, and let yourself go heavy. " +
+      "<b>Careful:</b> a single blink or a slow look around will dunk the ball, because that energy really is in this band — so a high score can mean " +
+      "'drowsy and drifting' or just 'you moved your eyes'. This is the rhythm your theta score was leaking up from, which is why the theta game now " +
+      "holds the ball whenever delta is what's really driving it.",
+  },
   theta: {
     title: "hoop-theta",
     eyebrow: "theta neurofeedback · 5–7 Hz",
@@ -685,7 +698,7 @@ setInterval(() => {
   meter.update(now);
 
   if (calSamples) {
-    if (!meter.artifact) BAND_NAMES.forEach((n) => calSamples[n].push(meter[n]));
+    if (!meter.artifact) BAND_NAMES.forEach((n) => { if (!meter.contamFor(n)) calSamples[n].push(meter[n]); });
     const left = Math.max(0, calEndsAt - now);
     el("calbar-fill").style.width = `${100 - (left / (CAL_SECONDS * 1000)) * 100}%`;
     el("cal-note").textContent = `${calSamples.alpha.length} clean windows · in-band signal ${meter.lastSd.toFixed(0)} µV (needs under 150) · ` +
@@ -727,12 +740,17 @@ setInterval(() => {
   const share = meter[band()];
   const lift = liftFrom(share, baseline(), Number(el("sens").value));
   const c = court();
-  c.setLift(lift, meter.artifact);
-  if (toneAllowed()) setToneLift(lift);
+  // Drift guard: if this band's score is really low-frequency spillover (theta
+  // catching delta), hold the ball rather than count it — same freeze the
+  // no-signal artifact case uses.
+  const contaminated = meter.contamFor(band());
+  const hold = meter.artifact || contaminated;
+  c.setLift(lift, hold);
+  if (toneAllowed()) setToneLift(hold ? 0 : lift);
 
   el("alpha-pct").textContent = `${(share * 100).toFixed(0)}%`;
   el("band-uv").textContent = `${meter.uv[band()].toFixed(1)} µV`;
-  el("lift-pct").textContent = meter.artifact ? "held" : `${Math.round(lift * 100)}%`;
+  el("lift-pct").textContent = meter.artifact ? "held" : contaminated ? "drift" : `${Math.round(lift * 100)}%`;
   el("baskets").textContent = c.score;
   el("zone-pct").textContent = c.totalMs > 1000 ? `${Math.round((c.zoneMs / c.totalMs) * 100)}%` : "—";
   el("used-chans").textContent = meter.used.length ? meter.used.map((i) => channelNames[i]).join(" + ") : "AF7/AF8 unusable";
