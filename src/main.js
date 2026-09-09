@@ -583,6 +583,7 @@ el("download").addEventListener("click", () => {
     durationSec: hasRaw ? +recorder.durationSec.toFixed(1) : 0,
     raw: hasRaw,
     device: el("device").textContent,
+    build: __BUILD_ID__,
   };
   addLogEntry(entry);
 
@@ -597,13 +598,14 @@ el("download").addEventListener("click", () => {
     `in the zone: ${zonePct == null ? "—" : zonePct + "%"}`,
     `calibration floor→ceiling: ${bl ? (bl.floor * 100).toFixed(0) + "%→" + (bl.ceiling * 100).toFixed(0) + "%" : "—"}`,
     `channels scored: ${chans}`,
+    `build: ${__BUILD_ID__}`,
     "sample rate: 256 Hz per channel",
     "t_seconds is time from recording start (see 'recording started' for the wall clock)",
   ];
   const csv = hasRaw
     ? recorder.toCSV(header)
     : header.map((l) => `# ${l}`).join("\n") + "\n# (no raw samples captured — connect a headband or run the simulator first)\n";
-  download(`muse_${b}_${stamp()}.csv`, csv);
+  download(`muse_${b}_${stamp()}_${__BUILD_ID__}.csv`, csv);
 
   const label = el("download").textContent;
   el("download").textContent = hasRaw ? `Saved ✓ (${recorder.durationSec.toFixed(0)}s)` : "Saved score ✓";
@@ -613,11 +615,11 @@ el("download").addEventListener("click", () => {
 el("export-log").addEventListener("click", () => {
   const list = loadLog();
   if (!list.length) return;
-  const cols = ["iso", "band", "baskets", "bestHoldMs", "zonePct", "absoluteUv", "floor", "ceiling", "sens", "channels", "durationSec", "device"];
+  const cols = ["iso", "band", "baskets", "bestHoldMs", "zonePct", "absoluteUv", "floor", "ceiling", "sens", "channels", "durationSec", "device", "build"];
   const esc = (v) => (v == null ? "" : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v);
   const lines = [cols.join(",")];
   for (const e of list.slice().reverse()) lines.push(cols.map((k) => esc(e[k])).join(","));
-  download(`muse_progress_${stamp()}.csv`, lines.join("\n") + "\n");
+  download(`muse_progress_${stamp()}_${__BUILD_ID__}.csv`, lines.join("\n") + "\n");
 });
 
 renderLog();
