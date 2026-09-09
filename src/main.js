@@ -13,6 +13,7 @@ import { ChannelState } from "./signal.js";
 import { Scope } from "./scope.js";
 import { AlphaMeter, baselineFrom, liftFrom, BAND_NAMES } from "./alpha.js";
 import { Hoop } from "./hoop.js";
+import { Recorder } from "./recorder.js";
 import { startTone, stopTone, setToneLift, swish, bounce, resumeAudio } from "./audio.js";
 import "./styles.css";
 
@@ -29,6 +30,8 @@ app.innerHTML = `
     </div>
     <div class="pills">
       <span class="pill" id="p-status"><span class="dot" id="dot"></span><span id="status">not connected</span></span>
+      <button class="btn btn--sm" id="mute" title="Mute the tone guide on every tab">🔊 Tone</button>
+      <button class="btn btn--sm" id="useall" title="Off: score from AF7 + AF8 (forehead) only. On: also fold in TP9 + TP10 (ears). Recalibrate after switching — the floor moves.">Use all four</button>
       <span class="pill">device <b id="device">—</b></span>
       <span class="pill">battery <b id="battery">—</b></span>
       <span class="pill">elapsed <b id="elapsed">0:00</b></span>
@@ -169,6 +172,7 @@ app.innerHTML = `
           <div class="grow"></div>
           <button class="btn btn--sm" id="recal">Recalibrate</button>
           <button class="btn btn--sm" id="reset-score">Reset score</button>
+          <button class="btn btn--sm" id="download" title="Save this session's scores here and download the raw four-channel EEG as a CSV">Download session</button>
         </div>
         <p class="note" id="how-to"></p>
         <p class="note">
@@ -179,6 +183,15 @@ app.innerHTML = `
           <b id="used-chans">AF7 + AF8</b>. Textbook alpha is strongest at the back of the head, but on this headband the ear
           contacts are the ones that rail and pick up jaw muscle, and a better electrode in theory is worth nothing if it won't hold contact.
         </p>
+
+        <div class="progress" id="progress">
+          <div class="progress__head">
+            <span class="eyebrow">your sessions · saved on this device</span>
+            <button class="btn btn--sm" id="export-log" hidden>Export all (CSV)</button>
+          </div>
+          <ol class="log" id="log-list"></ol>
+          <p class="note" id="log-empty">No sessions saved yet. Play, then hit <b>Download session</b> — it saves a row here and downloads the raw waveform with a timestamp.</p>
+        </div>
       </div>
     </section>
   </main>
@@ -187,7 +200,8 @@ app.innerHTML = `
     <p class="note">
       Unofficial. InteraXon publishes no Bluetooth spec; this follows the community protocol that <code>muse-js</code> established, so a firmware
       update could break it. Chrome or Edge on desktop only — Safari and Firefox don't implement Web Bluetooth, and neither does any iOS browser.
-      Nothing leaves this page: no upload, no storage beyond your calibration, no account. Not a medical device.
+      Your calibration and a short history of your session scores are saved on this device only. Raw brain-wave recordings stay in memory until you click
+      <b>Download session</b>, then save straight to your computer — no upload, no account, nothing leaves the page on its own. Not a medical device.
     </p>
   </footer>
 `;
@@ -241,6 +255,8 @@ const BANDS = {
 };
 let channelNames = CHANNELS.slice();
 const meter = new AlphaMeter(channels, channelNames);
+const recorder = new Recorder();
+let muted = false;
 
 const seen = { expected: CHANNELS.map(() => null), dropped: 0, total: 0 };
 let mainsHz = 60;
@@ -277,6 +293,18 @@ const band = () => (BAND_NAMES.includes(view) ? view : "alpha");
 const court = () => courts[band()];
 const baseline = () => baselines[band()];
 
+// One gate for the tone guide: the checkbox, the top-bar mute, the current tab,
+// and whether there's a calibration to play against.
+const toneAllowed = () => el("sound").checked && !muted && view !== "scope" && !!baseline();
+function refreshTone() {
+  if (toneAllowed()) {
+    resumeAudio();
+    startTone();
+  } else {
+    stopTone();
+  }
+}
+
 function setNotch(on) {
   channels.forEach((c) => c.setNotch(on ? mainsHz : 0));
 }
@@ -310,10 +338,7 @@ function setView(next) {
   el("how-to").innerHTML = cfg.howTo;
   court().setTheme(cfg.theme);
   showCalibrationState();
-  if (el("sound").checked && baseline()) {
-    resumeAudio();
-    startTone();
-  }
+  refreshTone();
 }
 
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => setView(t.dataset.view)));
@@ -322,6 +347,7 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
 function onSamples(channelIndex, samples, seq) {
   const state = channels[channelIndex];
   for (let i = 0; i < SAMPLES_PER_PACKET; i++) state.push(samples[i]);
+  if (recorder.recording) recorder.push(channelIndex, samples);
 
   // A jump of more than one means the radio lost packets. Implausibly large
   // jumps are ignored rather than believed: the counter's exact semantics are
@@ -347,6 +373,7 @@ const client = new MuseClient({
     channelNames = names;
     scope.setLabels(names);
     meter.setNames(names);
+    recorder.setNames(names);
   },
   onTelemetry: ({ battery }) => {
     el("battery").textContent = `${Math.round(battery)}%`;
@@ -375,6 +402,7 @@ el("connect").addEventListener("click", async () => {
     await client.start();
     startedAt = Date.now();
     running = true;
+    recorder.start(channelNames);
     showLive(true);
     setView(view);
   } catch (err) {
@@ -399,6 +427,7 @@ el("disconnect").addEventListener("click", () => {
   el("pause").textContent = "Pause";
   client.disconnect();
   running = false;
+  recorder.stop();
   showLive(false);
 });
 
@@ -454,13 +483,144 @@ el("use-saved").addEventListener("click", () => {
   showCalibrationState();
 });
 el("reset-score").addEventListener("click", () => court().reset());
-el("sound").addEventListener("change", (e) => {
-  if (e.target.checked && view !== "scope") {
-    resumeAudio();
-    startTone();
-  } else {
-    stopTone();
+
+// ---- progress log + session download ------------------------------------
+const PROGRESS_KEY = "museScopeProgressV1";
+
+function loadLog() {
+  try {
+    const raw = localStorage.getItem(PROGRESS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
+}
+function saveLog(list) {
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(list));
+  } catch {
+    /* private window — the session still downloads, it just won't persist */
+  }
+}
+function addLogEntry(entry) {
+  const list = loadLog();
+  list.unshift(entry);
+  if (list.length > 200) list.length = 200;
+  saveLog(list);
+  renderLog();
+}
+function fmtTs(ms) {
+  return new Date(ms).toLocaleString([], {
+    year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
+}
+function renderLog() {
+  const list = loadLog();
+  el("export-log").hidden = list.length === 0;
+  el("log-empty").hidden = list.length !== 0;
+  el("log-list").innerHTML = list
+    .slice(0, 12)
+    .map((e) => {
+      const zone = e.zonePct == null ? "—" : `${e.zonePct}%`;
+      const hold = e.bestHoldMs ? `${(e.bestHoldMs / 1000).toFixed(1)}s` : "—";
+      const raw = e.raw ? ` · <span class="log__raw">${e.durationSec}s raw</span>` : "";
+      return `<li><span class="log__t mono">${fmtTs(e.ts)}</span> <span class="log__band">${e.band}</span> <b>${e.baskets}</b> baskets · zone ${zone} · hold ${hold}${raw}</li>`;
+    })
+    .join("");
+}
+
+function download(name, text, type = "text/csv") {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function stamp(d = new Date()) {
+  const p = (x) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+el("download").addEventListener("click", () => {
+  const b = band();
+  const c = court();
+  const bl = baseline();
+  const now = Date.now();
+  const zonePct = c.totalMs > 1000 ? Math.round((c.zoneMs / c.totalMs) * 100) : null;
+  const hasRaw = recorder.sampleCount > 0;
+  const chans = meter.useAll ? "AF7+AF8+TP9+TP10" : "AF7+AF8";
+
+  const entry = {
+    ts: now,
+    iso: new Date(now).toISOString(),
+    band: b,
+    baskets: c.score,
+    bestHoldMs: Math.round(c.bestHoldMs),
+    zonePct,
+    absoluteUv: +meter.uv[b].toFixed(2),
+    floor: bl ? +bl.floor.toFixed(4) : null,
+    ceiling: bl ? +bl.ceiling.toFixed(4) : null,
+    sens: Number(el("sens").value),
+    channels: chans,
+    durationSec: hasRaw ? +recorder.durationSec.toFixed(1) : 0,
+    raw: hasRaw,
+    device: el("device").textContent,
+  };
+  addLogEntry(entry);
+
+  const startedIso = hasRaw ? new Date(recorder.startedAt).toISOString() : entry.iso;
+  const header = [
+    "Muse Scope session",
+    `saved: ${entry.iso}`,
+    `recording started: ${startedIso}`,
+    `band trained: ${b}`,
+    `baskets: ${c.score}`,
+    `best hold: ${(c.bestHoldMs / 1000).toFixed(1)} s`,
+    `in the zone: ${zonePct == null ? "—" : zonePct + "%"}`,
+    `calibration floor→ceiling: ${bl ? (bl.floor * 100).toFixed(0) + "%→" + (bl.ceiling * 100).toFixed(0) + "%" : "—"}`,
+    `channels scored: ${chans}`,
+    "sample rate: 256 Hz per channel",
+    "t_seconds is time from recording start (see 'recording started' for the wall clock)",
+  ];
+  const csv = hasRaw
+    ? recorder.toCSV(header)
+    : header.map((l) => `# ${l}`).join("\n") + "\n# (no raw samples captured — connect a headband or run the simulator first)\n";
+  download(`muse_${b}_${stamp()}.csv`, csv);
+
+  const label = el("download").textContent;
+  el("download").textContent = hasRaw ? `Saved ✓ (${recorder.durationSec.toFixed(0)}s)` : "Saved score ✓";
+  setTimeout(() => (el("download").textContent = label), 1800);
+});
+
+el("export-log").addEventListener("click", () => {
+  const list = loadLog();
+  if (!list.length) return;
+  const cols = ["iso", "band", "baskets", "bestHoldMs", "zonePct", "absoluteUv", "floor", "ceiling", "sens", "channels", "durationSec", "device"];
+  const esc = (v) => (v == null ? "" : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v);
+  const lines = [cols.join(",")];
+  for (const e of list.slice().reverse()) lines.push(cols.map((k) => esc(e[k])).join(","));
+  download(`muse_progress_${stamp()}.csv`, lines.join("\n") + "\n");
+});
+
+renderLog();
+el("sound").addEventListener("change", refreshTone);
+
+el("mute").addEventListener("click", () => {
+  muted = !muted;
+  el("mute").textContent = muted ? "🔇 Muted" : "🔊 Tone";
+  el("mute").classList.toggle("is-on", muted);
+  refreshTone();
+});
+
+el("useall").addEventListener("click", () => {
+  meter.useAll = !meter.useAll;
+  el("useall").textContent = meter.useAll ? "All four ✓" : "Use all four";
+  el("useall").classList.toggle("is-on", meter.useAll);
 });
 
 // ---- a synthetic headband, so the display can be checked without hardware ---
@@ -475,6 +635,7 @@ el("demo").addEventListener("click", () => {
   setView(view);
   startedAt = Date.now();
   running = true;
+  recorder.start(channelNames);
   status("simulated — no headband", "warn");
   el("device").textContent = "simulator";
   el("battery").textContent = "—";
@@ -548,10 +709,7 @@ setInterval(() => {
         el("cal-note").textContent =
           `Calibrated on ${collected} windows. ` +
           BAND_NAMES.map((n) => `${n} ${(next[n].floor * 100).toFixed(0)}→${(next[n].ceiling * 100).toFixed(0)}%`).join(" · ");
-        if (el("sound").checked && view !== "scope") {
-          resumeAudio();
-          startTone();
-        }
+        refreshTone();
       } else {
         // Say what was actually wrong rather than just "failed".
         el("cal-note").textContent =
@@ -570,7 +728,7 @@ setInterval(() => {
   const lift = liftFrom(share, baseline(), Number(el("sens").value));
   const c = court();
   c.setLift(lift, meter.artifact);
-  if (el("sound").checked) setToneLift(lift);
+  if (toneAllowed()) setToneLift(lift);
 
   el("alpha-pct").textContent = `${(share * 100).toFixed(0)}%`;
   el("band-uv").textContent = `${meter.uv[band()].toFixed(1)} µV`;

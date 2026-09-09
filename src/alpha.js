@@ -104,6 +104,10 @@ export class AlphaMeter {
     this.rel = 0; // alias for the alpha share, kept for older call sites
     this.artifact = true;
     this.used = [];
+    // false: score from the forehead pair only (AF7 + AF8), the reliable default.
+    // true: also fold in the ear channels (TP9 + TP10). They rail and pick up
+    // muscle, so clean windows help and dirty ones drop out on the amplitude gate.
+    this.useAll = false;
     this.tau = 0.45; // seconds of smoothing — enough to stop jitter, not enough to lag
     this.last = 0;
     this.lastSd = 0; // amplitude of the noisiest channel last window, for diagnostics
@@ -129,6 +133,7 @@ export class AlphaMeter {
    */
   _pick() {
     const front = [];
+    const all = [];
     let named = false;
     this.channels.forEach((c, i) => {
       const name = this.names[i] || "";
@@ -139,9 +144,13 @@ export class AlphaMeter {
         // is how calibration ended up collecting nothing. The amplitude check
         // below is the real gate.
         front.push(i);
+        all.push(i);
+      } else if (name === "TP9" || name === "TP10") {
+        named = true;
+        all.push(i);
       }
     });
-    if (named) return front;
+    if (named) return this.useAll ? all : front;
     return this.channels.map((_, i) => i).filter((i) => this.channels[i].quality.grade === "good" || this.channels[i].quality.grade === "fair");
   }
 
