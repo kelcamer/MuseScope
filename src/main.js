@@ -33,6 +33,7 @@ app.innerHTML = `
       <span class="pill">battery <b id="battery">—</b></span>
       <span class="pill">elapsed <b id="elapsed">0:00</b></span>
       <span class="pill" id="p-loss">dropped <b id="loss">0</b></span>
+      <span class="pill">build <b id="build">—</b></span>
     </div>
   </header>
 
@@ -61,8 +62,8 @@ app.innerHTML = `
 
     <nav class="tabs" id="tabs" hidden>
       <button class="tab is-on" data-view="scope">Scope</button>
-      <button class="tab" data-view="alpha">Alpha hoop</button>
-      <button class="tab" data-view="beta">Beta hoop</button>
+      <button class="tab" data-view="alpha">hoop-alpha</button>
+      <button class="tab" data-view="beta">hoop-beta</button>
     </nav>
 
     <section class="panel panel--scope" id="view-scope" hidden>
@@ -185,6 +186,7 @@ app.innerHTML = `
 `;
 
 const el = (id) => document.getElementById(id);
+el("build").textContent = __BUILD_ID__;
 const channels = CHANNELS.map(() => new ChannelState());
 const scope = new Scope(el("scope"));
 // One canvas, one court per band: scores and streaks stay separate, and
@@ -192,7 +194,7 @@ const scope = new Scope(el("scope"));
 const courts = { alpha: new Hoop(el("court")), beta: new Hoop(el("court")) };
 const BANDS = {
   alpha: {
-    title: "Alpha hoop",
+    title: "hoop-alpha",
     eyebrow: "alpha neurofeedback · 8–12 Hz",
     theme: { ball: "#e8823c", ballDark: "#b8551b" },
     howTo:
@@ -200,7 +202,7 @@ const BANDS = {
       "somewhere soft — that's when alpha climbs. Which is why there's a tone: it rises with the ball, so you can play blind.",
   },
   beta: {
-    title: "Beta hoop",
+    title: "hoop-beta",
     eyebrow: "beta neurofeedback · 13–25 Hz",
     theme: { ball: "#57b7e8", ballDark: "#1d6c99" },
     howTo:
