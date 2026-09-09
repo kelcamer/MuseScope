@@ -92,6 +92,7 @@ app.innerHTML = `
         </label>
         <label class="check"><input type="checkbox" id="notch" checked /> Notch out mains</label>
         <div class="grow"></div>
+        <button class="btn btn--sm" id="download-scope" title="Download the raw four-channel EEG recorded so far this session as a CSV">Download session</button>
         <button class="btn btn--sm" id="pause">Pause</button>
         <button class="btn btn--sm" id="disconnect">Disconnect</button>
       </div>
@@ -610,6 +611,31 @@ el("download").addEventListener("click", () => {
   const label = el("download").textContent;
   el("download").textContent = hasRaw ? `Saved ✓ (${recorder.durationSec.toFixed(0)}s)` : "Saved score ✓";
   setTimeout(() => (el("download").textContent = label), 1800);
+});
+
+// Scope download: raw four-channel capture only — no game, no score, so no
+// progress-log entry. Just the waveform recorded so far this session.
+el("download-scope").addEventListener("click", () => {
+  const now = Date.now();
+  const hasRaw = recorder.sampleCount > 0;
+  const startedIso = new Date(hasRaw ? recorder.startedAt : now).toISOString();
+  const header = [
+    "Muse Scope session (raw scope capture)",
+    `saved: ${new Date(now).toISOString()}`,
+    `recording started: ${startedIso}`,
+    `channels: ${recorder.names.join(" + ") || "—"}`,
+    `build: ${__BUILD_ID__}`,
+    "sample rate: 256 Hz per channel",
+    "t_seconds is time from recording start (see 'recording started' for the wall clock)",
+  ];
+  const csv = hasRaw
+    ? recorder.toCSV(header)
+    : header.map((l) => `# ${l}`).join("\n") + "\n# (no raw samples captured — connect a headband or run the simulator first)\n";
+  download(`muse_scope_${stamp()}_${__BUILD_ID__}.csv`, csv);
+
+  const label = el("download-scope").textContent;
+  el("download-scope").textContent = hasRaw ? `Saved ✓ (${recorder.durationSec.toFixed(0)}s)` : "No signal yet";
+  setTimeout(() => (el("download-scope").textContent = label), 1800);
 });
 
 el("export-log").addEventListener("click", () => {
