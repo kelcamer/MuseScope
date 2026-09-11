@@ -16,6 +16,8 @@ import { Hoop } from "./hoop.js";
 import { Recorder } from "./recorder.js";
 import { startTone, stopTone, setToneLift, swish, bounce, resumeAudio } from "./audio.js";
 import { createAlphaTrainer } from "./alphatrain.js";
+import { createBetaFocus } from "./betafocus.js";
+import { createRelaxTrainer } from "./relaxface.js";
 import "./styles.css";
 
 const BASELINE_KEY = "museScopeBaselinesV3";
@@ -72,6 +74,8 @@ app.innerHTML = `
       <button class="tab" data-view="beta">hoop-beta</button>
       <button class="tab" data-view="gamma">hoop-gamma</button>
       <button class="tab tab--star" data-view="train">α-train ✦</button>
+      <button class="tab tab--star" data-view="beta">beta ✦</button>
+      <button class="tab tab--star" data-view="relax">relax ⌣</button>
     </nav>
 
     <section class="panel panel--scope" id="view-scope" hidden>
@@ -241,6 +245,66 @@ app.innerHTML = `
         <b>in the zone</b> (peak ≥ 1.5× its background) it turns bright and the timer counts. This is the same
         measurement that caught your 9.4 Hz alpha — now live, and yours to train against. Not a medical device.
       </p>
+    <section class="panel" id="view-beta" hidden>
+      <div class="hoop-head">
+        <div><span class="eyebrow">beta focus · forehead · no tape</span><h1 class="display">beta ✦</h1></div>
+        <div class="pills">
+          <span class="pill">beta <b id="bf-level">—</b></span>
+          <span class="pill">amp <b id="bf-uv">—</b></span>
+          <span class="pill">focused <b id="bf-time">0s</b></span>
+          <span class="pill">best <b id="bf-best">—</b></span>
+        </div>
+      </div>
+      <p class="lede">The beta game that <b>actually moves</b> — no ears, no tape, no 20-second calibration. It reads your
+        <b>forehead</b> and learns your own range live, so the bar always responds. Beta rises when you <b>engage</b> —
+        mental arithmetic, holding a number, planning a route. (Up front beta is part arousal, part muscle — a slight jaw
+        or brow tense nudges it too; that is honest.)</p>
+      <div class="train-stage">
+        <div class="train-meter"><div class="train-zoneline" style="bottom:60%"></div><div class="train-fill" id="bf-fill"></div></div>
+        <div class="train-side">
+          <div class="train-state quiet" id="bf-state">get set…</div>
+          <div class="ears"><span class="earbox">AF7 <b class="eardot" id="bf-af7">·</b></span><span class="earbox">AF8 <b class="eardot" id="bf-af8">·</b></span></div>
+          <p class="note">Reads whichever forehead sensor is livelier. Nothing to tape.</p>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn btn--primary" id="bf-begin">Begin</button>
+        <label class="check"><input type="checkbox" id="bf-sound" checked /> Tone (rises with beta)</label>
+        <div class="grow"></div>
+        <button class="btn btn--sm" id="bf-reset">Reset</button>
+      </div>
+      <p class="note">Self-calibrating: it adapts to your beta range over the first ~20–30 s, so it may swing before it settles.
+        The opposite skill to α-train and relax — here you push arousal UP. Not a medical device.</p>
+    </section>
+
+    <section class="panel" id="view-relax" hidden>
+      <div class="hoop-head">
+        <div><span class="eyebrow">relax your face · forehead · no tape</span><h1 class="display">relax ⌣</h1></div>
+        <div class="pills">
+          <span class="pill">relaxed <b id="rx-relax">—</b></span>
+          <span class="pill">muscle <b id="rx-muscle">—</b></span>
+          <span class="pill">calm <b id="rx-calm">0s</b></span>
+          <span class="pill">best <b id="rx-best">—</b></span>
+        </div>
+      </div>
+      <p class="lede">Tapeless — reads the <b>muscle</b> in your forehead and jaw (15–40 Hz, which up here is mostly face muscle,
+        not brain). The bar fills as you <b>let go</b>: soften your jaw, unfurrow your brow, drop your shoulders. The tone is
+        loud when you are tense and fades to a soft hum as you release — you win by making it go quiet.</p>
+      <div class="train-stage">
+        <div class="train-meter"><div class="train-zoneline" style="bottom:60%"></div><div class="train-fill" id="rx-fill"></div></div>
+        <div class="train-side">
+          <div class="train-state quiet" id="rx-state">get set…</div>
+          <div class="ears"><span class="earbox">AF7 <b class="eardot" id="rx-af7">·</b></span><span class="earbox">AF8 <b class="eardot" id="rx-af8">·</b></span></div>
+          <p class="note">This is the body half of calm (jaw/brow/arousal). The cortical alpha half needs the ears — that is α-train.</p>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn btn--primary" id="rx-begin">Begin</button>
+        <label class="check"><input type="checkbox" id="rx-sound" checked /> Tone (quiets as you relax)</label>
+        <div class="grow"></div>
+        <button class="btn btn--sm" id="rx-reset">Reset</button>
+      </div>
+      <p class="note">Self-calibrating to your own tense-to-slack range. Real EMG biofeedback — the honest thing the forehead can train. Not a medical device.</p>
     </section>
   </main>
 
@@ -307,7 +371,7 @@ const BANDS = {
     eyebrow: "beta neurofeedback · 13–25 Hz",
     theme: { ball: "#57b7e8", ballDark: "#1d6c99" },
     howTo:
-      "<b>How to score:</b> the opposite skill. Beta rises when you're actively working at something — count backwards from 300 by sevens, hold a phone " +
+      "<b>Ball won't move?</b> This older beta game needs a clean 20 s calibration and is built to resist muscle, so on hot forehead contact it can freeze — use the <b>beta ✦</b> tab instead (tapeless, self-calibrating, always responds). <br><b>How to score:</b> the opposite skill. Beta rises when you're actively working at something — count backwards from 300 by sevens, hold a phone " +
       "number in your head, plan a route. Eyes open. Closing them will sink the ball, which is the point: this game and the alpha one can't both be won " +
       "at once. <b>Careful:</b> jaw and forehead muscle spill into beta, so clenching raises the score without meaning anything. Keep your jaw slack " +
       "and it stays honest.",
@@ -318,6 +382,10 @@ const meter = new AlphaMeter(channels, channelNames);
 const recorder = new Recorder();
 let muted = false;
 const trainer = createAlphaTrainer({ channels, getNames: () => channelNames, isMuted: () => muted });
+const betaFocus = createBetaFocus({ channels, getNames: () => channelNames, isMuted: () => muted });
+const relaxTrainer = createRelaxTrainer({ channels, getNames: () => channelNames, isMuted: () => muted });
+const MODULES = { train: trainer, beta: betaFocus, relax: relaxTrainer };
+const isModule = (v) => Object.prototype.hasOwnProperty.call(MODULES, v);
 
 const seen = { expected: CHANNELS.map(() => null), dropped: 0, total: 0 };
 let mainsHz = 60;
@@ -356,7 +424,7 @@ const baseline = () => baselines[band()];
 
 // One gate for the tone guide: the checkbox, the top-bar mute, the current tab,
 // and whether there's a calibration to play against.
-const toneAllowed = () => el("sound").checked && !muted && view !== "scope" && view !== "train" && !!baseline();
+const toneAllowed = () => el("sound").checked && !muted && view !== "scope" && !isModule(view) && !!baseline();
 function refreshTone() {
   if (toneAllowed()) {
     resumeAudio();
@@ -380,11 +448,13 @@ function showLive(on) {
   el("gate").hidden = on;
   el("tabs").hidden = !on;
   el("view-scope").hidden = !on || view !== "scope";
-  el("view-hoop").hidden = !on || view === "scope" || view === "train";
+  el("view-hoop").hidden = !on || view === "scope" || isModule(view);
   el("view-train").hidden = !on || view !== "train";
+  el("view-beta").hidden = !on || view !== "beta";
+  el("view-relax").hidden = !on || view !== "relax";
   if (!on) {
     stopTone();
-    trainer.leave();
+    Object.values(MODULES).forEach((m) => m.leave());
   }
 }
 
@@ -393,14 +463,14 @@ function setView(next) {
   view = next;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-on", t.dataset.view === next));
   showLive(!el("tabs").hidden);
-  if (prev === "train" && next !== "train") trainer.leave();
+  if (isModule(prev) && prev !== next) MODULES[prev].leave();
   if (next === "scope") {
     stopTone();
     return;
   }
-  if (next === "train") {
+  if (isModule(next)) {
     stopTone();
-    trainer.enter();
+    MODULES[next].enter();
     return;
   }
   const cfg = BANDS[band()];
