@@ -15,6 +15,7 @@ import { AlphaMeter, baselineFrom, liftFrom, BAND_NAMES } from "./alpha.js";
 import { Hoop } from "./hoop.js";
 import { Recorder } from "./recorder.js";
 import { startTone, stopTone, setToneLift, swish, bounce, resumeAudio } from "./audio.js";
+import { createAlphaTrainer } from "./alphatrain.js";
 import "./styles.css";
 
 const BASELINE_KEY = "museScopeBaselinesV3";
@@ -70,6 +71,7 @@ app.innerHTML = `
       <button class="tab" data-view="alpha">hoop-alpha</button>
       <button class="tab" data-view="beta">hoop-beta</button>
       <button class="tab" data-view="gamma">hoop-gamma</button>
+      <button class="tab tab--star" data-view="train">α-train ✦</button>
     </nav>
 
     <section class="panel panel--scope" id="view-scope" hidden>
@@ -195,6 +197,50 @@ app.innerHTML = `
           <p class="note" id="log-empty">No sessions saved yet. Play, then hit <b>Download session</b> — it saves a row here and downloads the raw waveform with a timestamp.</p>
         </div>
       </div>
+    <section class="panel" id="view-train" hidden>
+      <div class="hoop-head">
+        <div>
+          <span class="eyebrow">real-alpha neurofeedback · ears only</span>
+          <h1 class="display">α-train</h1>
+        </div>
+        <div class="pills">
+          <span class="pill">peak <b id="tr-prom">—</b></span>
+          <span class="pill" title="where the peak sits — your alpha is ~9.4 Hz">at <b id="tr-freq">—</b></span>
+          <span class="pill">in the zone <b id="tr-zone">0s</b></span>
+          <span class="pill">best <b id="tr-best">—</b></span>
+        </div>
+      </div>
+      <p class="lede">
+        The one honest alpha trainer here. It reads your <b>ear</b> sensors and scores the real
+        <b>peak</b> at ~9.4 Hz — not the band-power the hoop games use, which movement fakes. Clenching,
+        blinking or drifting push it <b>down</b>; the way up is to go still and stop trying.
+      </p>
+      <div class="train-stage">
+        <div class="train-meter">
+          <div class="train-zoneline" title="peak present (1.5×)"></div>
+          <div class="train-fill" id="tr-fill"></div>
+        </div>
+        <div class="train-side">
+          <div class="train-state quiet" id="tr-state">get set…</div>
+          <div class="ears">
+            <span class="earbox">left ear <b class="eardot" id="tr-ear-L">·</b></span>
+            <span class="earbox">right ear <b class="eardot" id="tr-ear-R">·</b></span>
+          </div>
+          <p class="note">Both ears must read for a score — a real rhythm shows on both. One ear alone is contact noise.</p>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn btn--primary" id="tr-begin">Begin</button>
+        <label class="check"><input type="checkbox" id="tr-sound" checked /> Tone (rises with your alpha — for eyes closed)</label>
+        <div class="grow"></div>
+        <button class="btn btn--sm" id="tr-reset">Reset</button>
+      </div>
+      <p class="note">
+        <b>Setup:</b> tape both ears (TP9/TP10), sit with your back and head supported, eyes closed, still.
+        Give it a minute — the peak builds as you settle. The tone rises as your alpha peak grows; when you're
+        <b>in the zone</b> (peak ≥ 1.5× its background) it turns bright and the timer counts. This is the same
+        measurement that caught your 9.4 Hz alpha — now live, and yours to train against. Not a medical device.
+      </p>
     </section>
   </main>
 
@@ -271,6 +317,7 @@ let channelNames = CHANNELS.slice();
 const meter = new AlphaMeter(channels, channelNames);
 const recorder = new Recorder();
 let muted = false;
+const trainer = createAlphaTrainer({ channels, getNames: () => channelNames, isMuted: () => muted });
 
 const seen = { expected: CHANNELS.map(() => null), dropped: 0, total: 0 };
 let mainsHz = 60;
@@ -309,7 +356,7 @@ const baseline = () => baselines[band()];
 
 // One gate for the tone guide: the checkbox, the top-bar mute, the current tab,
 // and whether there's a calibration to play against.
-const toneAllowed = () => el("sound").checked && !muted && view !== "scope" && !!baseline();
+const toneAllowed = () => el("sound").checked && !muted && view !== "scope" && view !== "train" && !!baseline();
 function refreshTone() {
   if (toneAllowed()) {
     resumeAudio();
@@ -333,16 +380,27 @@ function showLive(on) {
   el("gate").hidden = on;
   el("tabs").hidden = !on;
   el("view-scope").hidden = !on || view !== "scope";
-  el("view-hoop").hidden = !on || view === "scope";
-  if (!on) stopTone();
+  el("view-hoop").hidden = !on || view === "scope" || view === "train";
+  el("view-train").hidden = !on || view !== "train";
+  if (!on) {
+    stopTone();
+    trainer.leave();
+  }
 }
 
 function setView(next) {
+  const prev = view;
   view = next;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-on", t.dataset.view === next));
   showLive(!el("tabs").hidden);
+  if (prev === "train" && next !== "train") trainer.leave();
   if (next === "scope") {
     stopTone();
+    return;
+  }
+  if (next === "train") {
+    stopTone();
+    trainer.enter();
     return;
   }
   const cfg = BANDS[band()];

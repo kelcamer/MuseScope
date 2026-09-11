@@ -168,3 +168,39 @@ input[type="range"] { accent-color: var(--accent); width: 130px; }
 @media (max-width: 620px) {
   #court { height: 360px; }
 }
+
+/* ---- α-train : the ears-only, peak-based alpha trainer ---- */
+.tab--star { color: var(--accent); }
+.train-stage { display: flex; gap: 22px; align-items: stretch; margin: 18px 0; flex-wrap: wrap; }
+.train-meter {
+  position: relative; width: 92px; min-height: 300px; flex: 0 0 92px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden;
+}
+.train-zoneline { position: absolute; left: 0; right: 0; bottom: 31.25%; border-top: 2px dashed var(--ink-faint); opacity: 0.7; }
+.train-fill {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 0%;
+  background: linear-gradient(to top, var(--ink-faint), var(--ink-dim));
+  transition: height 0.12s linear, background 0.25s ease;
+}
+.train-fill.is-zone { background: linear-gradient(to top, var(--accent), #7ee6f0); box-shadow: 0 0 26px var(--accent); }
+.train-side { flex: 1 1 240px; display: flex; flex-direction: column; gap: 14px; justify-content: center; }
+.train-state {
+  font-size: 20px; font-weight: 600; padding: 14px 16px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-dim);
+}
+.train-state.zone { color: #06231f; background: var(--accent); border-color: var(--accent); box-shadow: 0 0 20px rgba(63,200,214,0.4); }
+.train-state.build { color: var(--amber); border-color: var(--amber); }
+.train-state.quiet { color: var(--ink-dim); }
+.train-state.warn { color: var(--amber); border-color: var(--amber); }
+.train-state.off { color: var(--danger); border-color: var(--danger); }
+.ears { display: flex; gap: 12px; flex-wrap: wrap; }
+.earbox {
+  display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-faint);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.eardot { font-family: "JetBrains Mono", monospace; font-size: 15px; line-height: 1; }
+.eardot.ok { color: var(--good); text-shadow: 0 0 8px var(--good); }
+.eardot.warn { color: var(--amber); }
+.eardot.bad { color: var(--danger); }
