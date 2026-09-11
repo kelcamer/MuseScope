@@ -51,7 +51,10 @@ export function createRelaxTrainer({ channels, getNames, isMuted }) {
     if ((railed / n) * 100 > 20) return null;
     detrend(buf, n);
     let p = 0;
-    for (let f = EMG_LO; f <= EMG_HI; f++) p += binPower(buf, n, f);
+    for (let f = EMG_LO; f <= EMG_HI; f++) {
+      if (f >= 21 && f <= 22) continue; // skip the ~21.5 Hz device hum so tension isn't faked by the headband
+      p += binPower(buf, n, f);
+    }
     return Math.sqrt(p); // µV RMS in the muscle band
   }
 

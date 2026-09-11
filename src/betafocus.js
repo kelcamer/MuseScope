@@ -48,7 +48,10 @@ export function createBetaFocus({ channels, getNames, isMuted }) {
     if ((railed / n) * 100 > 20) return null;
     detrend(buf, n);
     let p = 0;
-    for (let f = BETA_LO; f <= BETA_HI; f++) p += binPower(buf, n, f);
+    for (let f = BETA_LO; f <= BETA_HI; f++) {
+      if (f >= 21 && f <= 22) continue; // skip the headband's ~21.5 Hz device hum (subharmonic of the 42.5 Hz line) — it's not brain
+      p += binPower(buf, n, f);
+    }
     return Math.sqrt(p);
   }
 
