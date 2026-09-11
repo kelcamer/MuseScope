@@ -74,7 +74,7 @@ app.innerHTML = `
       <button class="tab" data-view="beta">hoop-beta</button>
       <button class="tab" data-view="gamma">hoop-gamma</button>
       <button class="tab tab--star" data-view="train">α-train ✦</button>
-      <button class="tab tab--star" data-view="beta">beta ✦</button>
+      <button class="tab tab--star" data-view="focus">beta ✦</button>
       <button class="tab tab--star" data-view="relax">relax ⌣</button>
     </nav>
 
@@ -201,6 +201,8 @@ app.innerHTML = `
           <p class="note" id="log-empty">No sessions saved yet. Play, then hit <b>Download session</b> — it saves a row here and downloads the raw waveform with a timestamp.</p>
         </div>
       </div>
+    </section>
+
     <section class="panel" id="view-train" hidden>
       <div class="hoop-head">
         <div>
@@ -245,7 +247,9 @@ app.innerHTML = `
         <b>in the zone</b> (peak ≥ 1.5× its background) it turns bright and the timer counts. This is the same
         measurement that caught your 9.4 Hz alpha — now live, and yours to train against. Not a medical device.
       </p>
-    <section class="panel" id="view-beta" hidden>
+    </section>
+
+    <section class="panel" id="view-focus" hidden>
       <div class="hoop-head">
         <div><span class="eyebrow">beta focus · forehead · no tape</span><h1 class="display">beta ✦</h1></div>
         <div class="pills">
@@ -384,7 +388,7 @@ let muted = false;
 const trainer = createAlphaTrainer({ channels, getNames: () => channelNames, isMuted: () => muted });
 const betaFocus = createBetaFocus({ channels, getNames: () => channelNames, isMuted: () => muted });
 const relaxTrainer = createRelaxTrainer({ channels, getNames: () => channelNames, isMuted: () => muted });
-const MODULES = { train: trainer, beta: betaFocus, relax: relaxTrainer };
+const MODULES = { train: trainer, focus: betaFocus, relax: relaxTrainer };
 const isModule = (v) => Object.prototype.hasOwnProperty.call(MODULES, v);
 
 const seen = { expected: CHANNELS.map(() => null), dropped: 0, total: 0 };
@@ -450,7 +454,7 @@ function showLive(on) {
   el("view-scope").hidden = !on || view !== "scope";
   el("view-hoop").hidden = !on || view === "scope" || isModule(view);
   el("view-train").hidden = !on || view !== "train";
-  el("view-beta").hidden = !on || view !== "beta";
+  el("view-focus").hidden = !on || view !== "focus";
   el("view-relax").hidden = !on || view !== "relax";
   if (!on) {
     stopTone();
